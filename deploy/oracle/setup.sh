@@ -218,7 +218,7 @@ URL="http://${DOMAIN:-$IP}"
 [[ -n "$DOMAIN" && "$SKIP_TLS" == "no" ]] && URL="https://${DOMAIN}"
 
 sleep 2
-if curl -fsS --max-time 10 "http://127.0.0.1:${PORT}/api/health" >/dev/null; then
+if curl -fs --max-time 10 "http://127.0.0.1:${PORT}/api/health" >/dev/null 2>&1; then
     STATUS="працює"
 else
     STATUS="НЕ ВІДПОВІДАЄ — дивіться: journalctl -u ${APP_NAME} -n 50"
