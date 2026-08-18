@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Відновлення бази кошторисів із резервної копії.
-#   sudo /opt/budsmet/app/deploy/oracle/restore.sh /var/backups/budsmet/budsmet-20260818-033000.db.gz
+#   sudo /opt/budsmet/app/deploy/vm/restore.sh /var/backups/budsmet/budsmet-20260818-033000.db.gz
 #
 # Увага: SQLite працює в режимі WAL, тому просто підкласти файл бази недостатньо —
 # поруч треба прибрати старі -wal і -shm, інакше застосунок побачить суміш даних.

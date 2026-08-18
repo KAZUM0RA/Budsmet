@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Резервна копія бази кошторисів. Безпечна для роботи «на гарячу» —
 # використовує механізм резервного копіювання самого SQLite.
-#   sudo /opt/budsmet/app/deploy/oracle/backup.sh [каталог]
+#   sudo /opt/budsmet/app/deploy/vm/backup.sh [каталог]
 set -euo pipefail
 
 APP_NAME="budsmet"

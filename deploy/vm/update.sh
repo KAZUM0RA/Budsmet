@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Оновлення Budsmet до останньої версії з репозиторію.
-#   sudo /opt/budsmet/app/deploy/oracle/update.sh
+#   sudo /opt/budsmet/app/deploy/vm/update.sh
 set -euo pipefail
 
 APP_NAME="budsmet"
@@ -14,7 +14,7 @@ git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 BRANCH="$(git -C "$APP_DIR" rev-parse --abbrev-ref HEAD)"
 
 echo "==> Резервна копія бази перед оновленням"
-"${APP_DIR}/deploy/oracle/backup.sh" >/dev/null
+"${APP_DIR}/deploy/vm/backup.sh" >/dev/null
 
 echo "==> Отримання оновлень (гілка ${BRANCH})"
 git -C "$APP_DIR" fetch --depth 1 origin "$BRANCH"

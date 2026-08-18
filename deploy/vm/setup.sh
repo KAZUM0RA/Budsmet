@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Розгортання Budsmet на віртуальній машині Oracle Cloud Always Free.
+# Розгортання Budsmet на віртуальній машині з Ubuntu 22.04/24.04.
+# Перевірено на Oracle Cloud Always Free та Google Cloud Always Free.
 # Скрипт ідемпотентний: його можна запускати повторно.
 #
 # Приклад:
@@ -122,7 +123,7 @@ sed -e "s|__USER__|${APP_NAME}|g" \
     -e "s|__VENV_DIR__|${VENV_DIR}|g" \
     -e "s|__DATA_DIR__|${DATA_DIR}|g" \
     -e "s|__PORT__|${PORT}|g" \
-    "${APP_DIR}/deploy/oracle/budsmet.service" > "/etc/systemd/system/${APP_NAME}.service"
+    "${APP_DIR}/deploy/vm/budsmet.service" > "/etc/systemd/system/${APP_NAME}.service"
 touch /etc/budsmet.env
 chmod 600 /etc/budsmet.env
 systemctl daemon-reload
@@ -147,7 +148,7 @@ fi
 log "Налаштування nginx"
 SERVER_NAME="${DOMAIN:-_}"
 sed -e "s|__SERVER_NAME__|${SERVER_NAME}|g" -e "s|__PORT__|${PORT}|g" \
-    "${APP_DIR}/deploy/oracle/nginx-budsmet.conf" > "/etc/nginx/sites-available/${APP_NAME}"
+    "${APP_DIR}/deploy/vm/nginx-budsmet.conf" > "/etc/nginx/sites-available/${APP_NAME}"
 # Якщо на машині вимкнено IPv6, рядок «listen [::]:80» не дасть nginx запуститись.
 if [[ ! -f /proc/net/if_inet6 ]]; then
     sed -i '/listen \[::\]:/d' "/etc/nginx/sites-available/${APP_NAME}"
@@ -159,8 +160,8 @@ nginx -t
 systemctl reload nginx
 
 # ------------------------------------------------------------- фаєрвол
-# На образах Oracle усі порти, крім 22, закриті локальними правилами —
-# це найчастіша причина, чому сайт «не відкривається» після налаштування.
+# На багатьох хмарних образах (зокрема Oracle) усі порти, крім 22, закриті
+# локальними правилами — найчастіша причина, чому сайт «не відкривається».
 log "Відкриття портів 80 і 443 на самій машині"
 if command -v firewall-cmd >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
     firewall-cmd --permanent --add-service=http  >/dev/null
@@ -192,7 +193,7 @@ fi
 log "Налаштування щоденної резервної копії"
 cat > /etc/cron.d/${APP_NAME}-backup <<CRON
 # Щоденна резервна копія бази кошторисів о 03:30. Зберігається 14 останніх копій.
-30 3 * * * root ${APP_DIR}/deploy/oracle/backup.sh >/dev/null 2>&1
+30 3 * * * root ${APP_DIR}/deploy/vm/backup.sh >/dev/null 2>&1
 CRON
 chmod 644 "/etc/cron.d/${APP_NAME}-backup"
 
@@ -207,7 +208,7 @@ if [[ -n "$DOMAIN" && "$SKIP_TLS" == "no" ]]; then
     else
         warn "Сертифікат не отримано. Найчастіші причини:"
         warn "  • домен ще не вказує на IP цієї машини (перевірте: dig +short ${DOMAIN});"
-        warn "  • порт 80 закритий у Security List віртуальної мережі в консолі Oracle."
+        warn "  • порт 80 закритий у налаштуваннях мережі хмари (Security List / Firewall rules)."
         warn "Після усунення повторіть: sudo certbot --nginx -d ${DOMAIN}"
     fi
 fi
@@ -237,8 +238,8 @@ cat <<SUMMARY
 ────────────────────────────────────────────────────────────────
   Журнал        journalctl -u ${APP_NAME} -f
   Перезапуск    sudo systemctl restart ${APP_NAME}
-  Оновлення     sudo ${APP_DIR}/deploy/oracle/update.sh
-  Резервна копія sudo ${APP_DIR}/deploy/oracle/backup.sh
+  Оновлення     sudo ${APP_DIR}/deploy/vm/update.sh
+  Резервна копія sudo ${APP_DIR}/deploy/vm/backup.sh
 ────────────────────────────────────────────────────────────────
 SUMMARY
 

@@ -37,8 +37,9 @@ pip install -r requirements.txt
 
 ## Розгортання на сервері
 
-Комплект для безкоштовної віртуальної машини Oracle Cloud Always Free —
-покрокова інструкція та скрипти: [`deploy/oracle/README.md`](deploy/oracle/README.md).
+Скрипти розгортання на будь-яку машину з Ubuntu лежать у [`deploy/vm/`](deploy/vm),
+покрокові інструкції для конкретних майданчиків — у [`deploy/README.md`](deploy/README.md)
+(Oracle Cloud, Google Cloud, або запуск на власному комп'ютері з доступом через інтернет).
 
 Встановлення одною командою на свіжій машині з Ubuntu 24.04:
 
@@ -46,7 +47,7 @@ pip install -r requirements.txt
 sudo apt-get update && sudo apt-get install -y git && \
 sudo git clone --depth 1 --branch claude/web-app-cost-estimates-l1x9ef \
   https://github.com/KAZUM0RA/Budsmet.git /opt/budsmet/app && \
-sudo /opt/budsmet/app/deploy/oracle/setup.sh --domain ваш.домен --login ваш_логін
+sudo /opt/budsmet/app/deploy/vm/setup.sh --domain ваш.домен --login ваш_логін
 ```
 
 Скрипт налаштує службу автозапуску, nginx зі входом за паролем, HTTPS від
