@@ -1,0 +1,34 @@
+"""Налаштування застосунку (перевизначаються змінними середовища)."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
+FRONTEND_DIR = BASE_DIR.parent / "frontend"
+
+# --- Ціноутворення (типові значення, редагуються в інтерфейсі об'єкта) ---
+DEFAULTS = {
+    "overhead_pct": 15.0,      # загальновиробничі витрати, % від прямих витрат
+    "profit_pct": 8.0,         # кошторисний прибуток, %
+    "admin_pct": 2.0,          # адміністративні витрати, %
+    "risk_pct": 0.0,           # кошти на покриття ризиків, %
+    "vat_pct": 20.0,           # ПДВ, %
+    "materials_included": True,  # чи враховувати матеріали у кошторисі
+    "round_to": 2,
+}
+
+# --- Інтернет-аналіз цін ---
+# Провайдер задається змінною BUDSMET_PRICE_PROVIDER: off | serpapi | brave | google | custom
+PRICE_PROVIDER = os.environ.get("BUDSMET_PRICE_PROVIDER", "off").strip().lower()
+SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")
+BRAVE_API_KEY = os.environ.get("BRAVE_API_KEY", "")
+GOOGLE_CSE_KEY = os.environ.get("GOOGLE_CSE_KEY", "")
+GOOGLE_CSE_CX = os.environ.get("GOOGLE_CSE_CX", "")
+CUSTOM_PRICE_ENDPOINT = os.environ.get("BUDSMET_PRICE_ENDPOINT", "")
+WEB_CACHE_DAYS = int(os.environ.get("BUDSMET_WEB_CACHE_DAYS", "14"))
+WEB_TIMEOUT = float(os.environ.get("BUDSMET_WEB_TIMEOUT", "12"))
+
+# Скільки останніх записів історії враховувати при усередненні ціни.
+HISTORY_WINDOW = int(os.environ.get("BUDSMET_HISTORY_WINDOW", "8"))

@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Budsmet — складання кошторисів</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏗️</text></svg>">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="logo">🏗️</span><div><b>Budsmet</b><small>кошториси будівельних робіт</small></div></div>
+
+    <nav class="nav">
+      <button class="nav-btn active" data-view="objects">Об'єкти</button>
+      <button class="nav-btn" data-view="import">Імпорт обсягів</button>
+      <button class="nav-btn" data-view="catalog">Довідник цін</button>
+      <button class="nav-btn" data-view="history">Історія цін</button>
+    </nav>
+
+    <div class="obj-list-wrap">
+      <div class="side-head">
+        <span>Мої об'єкти</span>
+        <button id="btn-new-object" class="mini" title="Створити об'єкт">+</button>
+      </div>
+      <ul id="object-list" class="obj-list"></ul>
+    </div>
+
+    <div class="side-foot">
+      <div id="provider-badge" class="badge">…</div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- ------------------------------------------------ ОБ'ЄКТИ / КОШТОРИС -->
+    <section id="view-objects" class="view active">
+      <div id="object-empty" class="empty">
+        <h2>Почніть з об'єкта</h2>
+        <p>Створіть об'єкт вручну і додайте роботи з обсягами — програма підбере ціни.
+           Або завантажте готову відомість обсягів робіт у вкладці «Імпорт обсягів».</p>
+        <div class="empty-actions">
+          <button id="btn-new-object-2" class="primary">Створити об'єкт</button>
+          <button class="ghost" data-goto="import">Завантажити відомість</button>
+        </div>
+      </div>
+
+      <div id="object-view" class="hidden">
+        <header class="obj-head">
+          <div class="obj-title">
+            <h1 id="obj-name" contenteditable="true" spellcheck="false"></h1>
+            <div class="obj-meta">
+              <label>Адреса <input id="obj-address" type="text" placeholder="вул., буд."></label>
+              <label>Місто <input id="obj-city" list="cities-list" type="text" placeholder="Полтава"></label>
+              <label>Область <input id="obj-region" list="regions-list" type="text" placeholder="Полтавська область"></label>
+              <label>Замовник <input id="obj-customer" type="text" placeholder="—"></label>
+              <label>Шифр <input id="obj-doccode" type="text" placeholder="—"></label>
+            </div>
+          </div>
+          <div class="obj-actions">
+            <button id="btn-reprice" class="primary">Перерахувати ціни</button>
+            <div class="dropdown">
+              <button class="ghost">Вивантажити ▾</button>
+              <div class="dropdown-menu">
+                <a id="exp-xlsx">Excel (.xlsx)</a>
+                <a id="exp-pdf">PDF</a>
+                <a id="exp-html">HTML для друку</a>
+              </div>
+            </div>
+            <button id="btn-to-history" class="ghost" title="Зберегти ціни цього кошторису як історичні">В історію</button>
+            <button id="btn-delete-object" class="danger-ghost" title="Видалити об'єкт">🗑</button>
+          </div>
+        </header>
+
+        <div class="settings-bar">
+          <label>Джерело цін
+            <select id="set-strategy"></select>
+          </label>
+          <label>ЗВВ, % <input id="set-overhead" type="number" step="0.1" min="0"></label>
+          <label>Прибуток, % <input id="set-profit" type="number" step="0.1" min="0"></label>
+          <label>Адмін., % <input id="set-admin" type="number" step="0.1" min="0"></label>
+          <label>Ризики, % <input id="set-risk" type="number" step="0.1" min="0"></label>
+          <label>ПДВ, % <input id="set-vat" type="number" step="0.1" min="0"></label>
+          <label class="chk"><input id="set-materials" type="checkbox"> враховувати матеріали</label>
+          <span id="reprice-stats" class="stats"></span>
+        </div>
+
+        <div class="add-row">
+          <div class="ac-wrap">
+            <input id="add-name" type="text" autocomplete="off"
+                   placeholder="Найменування роботи — почніть вводити, напр. «укладання плитки»">
+            <div id="ac-list" class="ac-list hidden"></div>
+          </div>
+          <input id="add-unit" list="units-list" type="text" placeholder="од." class="w-unit">
+          <input id="add-qty" type="number" step="0.0001" placeholder="обсяг" class="w-qty">
+          <select id="add-division" class="w-div"></select>
+          <button id="btn-add-position" class="primary">Додати</button>
+        </div>
+
+        <div id="estimate-tree" class="tree"></div>
+
+        <div class="totals-wrap">
+          <table id="totals" class="totals"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- --------------------------------------------------------- ІМПОРТ -->
+    <section id="view-import" class="view">
+      <h1>Імпорт відомості обсягів робіт</h1>
+      <p class="lead">Завантажте порожню відомість (PDF, XLSX або CSV) з переліком робіт та обсягами.
+        Програма розбере файл, підбере ціни та поверне заповнений кошторис.</p>
+
+      <div id="dropzone" class="dropzone">
+        <input id="file-input" type="file" accept=".pdf,.xlsx,.xlsm,.csv,.txt" hidden>
+        <div class="dz-inner">
+          <div class="dz-icon">📄</div>
+          <b>Перетягніть файл сюди</b>
+          <span>або <button id="btn-browse" class="linkish">оберіть на диску</button></span>
+          <small>PDF (АВК-5), XLSX, CSV — до 20 МБ</small>
+        </div>
+      </div>
+
+      <div class="import-opts">
+        <label>Місто <input id="imp-city" list="cities-list" type="text" placeholder="визначити з файлу"></label>
+        <label>Область <input id="imp-region" list="regions-list" type="text" placeholder="визначити з файлу"></label>
+        <label>Джерело цін <select id="imp-strategy"></select></label>
+      </div>
+
+      <div id="import-preview" class="hidden">
+        <div class="preview-head">
+          <div>
+            <h2 id="prev-name"></h2>
+            <div id="prev-meta" class="muted"></div>
+          </div>
+          <div class="preview-actions">
+            <button id="btn-import-create" class="primary">Створити об'єкт і порахувати</button>
+            <div class="dropdown">
+              <button class="ghost">Одразу заповнений файл ▾</button>
+              <div class="dropdown-menu">
+                <a data-fill="xlsx">Excel (.xlsx)</a>
+                <a data-fill="pdf">PDF</a>
+                <a data-fill="html">HTML для друку</a>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="prev-warnings"></div>
+        <div id="prev-table" class="prev-table"></div>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------------- ДОВІДНИК -->
+    <section id="view-catalog" class="view">
+      <h1>Довідник розцінок</h1>
+      <p class="lead">Базові ціни за одиницю (без ПДВ). Під час розрахунку до них застосовується
+        регіональний коефіцієнт міста або області об'єкта.</p>
+      <div class="cat-bar">
+        <input id="cat-search" type="search" placeholder="Пошук роботи…">
+        <select id="cat-category"><option value="">усі розділи</option></select>
+        <button id="btn-cat-new" class="primary">Додати розцінку</button>
+      </div>
+      <div id="catalog-table" class="prev-table"></div>
+    </section>
+
+    <!-- -------------------------------------------------------- ІСТОРІЯ -->
+    <section id="view-history" class="view">
+      <h1>Історія цін</h1>
+      <p class="lead">Ціни зі збережених кошторисів. Саме вони підставляються першими,
+        коли обрано стратегію «спершу історія».</p>
+      <input id="hist-search" type="search" placeholder="Пошук за найменуванням…">
+      <div id="history-table" class="prev-table"></div>
+    </section>
+  </main>
+</div>
+
+<datalist id="cities-list"></datalist>
+<datalist id="regions-list"></datalist>
+<datalist id="units-list"></datalist>
+
+<div id="modal" class="modal hidden"><div class="modal-box"><div id="modal-body"></div></div></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

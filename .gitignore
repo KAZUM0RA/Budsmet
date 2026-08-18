@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Локальна база даних застосунку
+budsmet.db
+budsmet.db-wal
+budsmet.db-shm
+*.db
+
+# Node (лише для UI-тестів)
+node_modules/
+package-lock.json
+.ui-test.mjs
+
+# Вивантажені кошториси
+out/
+*.xlsx
+!samples/*.xlsx
