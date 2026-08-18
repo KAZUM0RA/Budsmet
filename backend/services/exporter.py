@@ -33,6 +33,20 @@ def _money(value) -> float:
         return 0.0
 
 
+def _qty(value) -> float:
+    """Обсяг не можна округляти до копійок: у відомостях трапляється 9,690009 т."""
+    try:
+        return round(float(value or 0), 6)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _fmt_qty(value, separator: str = " ") -> str:
+    """Обсяг без зайвих нулів: 9,690009 → «9,690009», 4 → «4»."""
+    text = f"{_qty(value):,.6f}".rstrip("0").rstrip(".")
+    return (text or "0").replace(",", separator)
+
+
 def _source_label(position: dict) -> str:
     return SOURCE_LABELS.get(position.get("price_source", ""), position.get("price_source", "") or "—")
 
@@ -62,7 +76,7 @@ def _position_cells(position: dict) -> list:
         position.get("number", ""),
         position.get("name", ""),
         position.get("unit", ""),
-        _money(position.get("quantity")),
+        _qty(position.get("quantity")),
         _money(position.get("labor_price")),
         _money(position.get("material_price")),
         _money(position.get("machines_price")),
@@ -109,6 +123,7 @@ def to_xlsx(calc: dict) -> bytes:
     div_fill = PatternFill("solid", fgColor="EDF2FA")
     total_fill = PatternFill("solid", fgColor="FFF2CC")
     money_fmt = "#,##0.00"
+    qty_fmt = "#,##0.######"   # обсяги бувають з 4–6 знаками (напр. 9,690009 т)
 
     row = 1
     for line in _header_lines(calc):
@@ -138,7 +153,7 @@ def to_xlsx(calc: dict) -> bytes:
                 if idx == 2:
                     cell.alignment = Alignment(wrap_text=True, vertical="top")
                 elif idx >= 4:
-                    cell.number_format = money_fmt
+                    cell.number_format = qty_fmt if idx == 4 else money_fmt
                     cell.alignment = Alignment(horizontal="right")
                 else:
                     cell.alignment = Alignment(horizontal="center", vertical="top")
@@ -272,7 +287,7 @@ def to_pdf(calc: dict) -> bytes:
         if kind == "position":
             cells = _position_cells(item)
             data.append([str(cells[0]), Paragraph(html.escape(str(cells[1])), cell_style),
-                         str(cells[2]), fmt(cells[3])] +
+                         str(cells[2]), _fmt_qty(cells[3])] +
                         [fmt(v) for v in cells[4:12]] +
                         [Paragraph(html.escape(str(cells[12])), cell_style)])
         else:
@@ -331,7 +346,8 @@ def to_html(calc: dict) -> str:
             cells = _position_cells(item)
             tds = [f"<td class=num>{esc(cells[0])}</td>", f"<td>{esc(cells[1])}</td>",
                    f"<td class=num>{esc(cells[2])}</td>"]
-            tds += [f"<td class=money>{fmt(v)}</td>" for v in cells[3:12]]
+            tds.append(f"<td class=money>{_fmt_qty(cells[3], '&nbsp;')}</td>")
+            tds += [f"<td class=money>{fmt(v)}</td>" for v in cells[4:12]]
             tds.append(f"<td class=src>{esc(cells[12])}</td>")
             body.append("<tr>" + "".join(tds) + "</tr>")
         else:

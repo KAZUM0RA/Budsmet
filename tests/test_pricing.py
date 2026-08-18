@@ -84,3 +84,38 @@ def test_materials_can_be_excluded():
     result = pricing.calculate(tree, {"materials_included": False})
     assert result["direct"]["material"] == 0.0
     assert result["direct"]["total"] == 200.0
+
+
+def test_export_keeps_full_quantity_precision(clean_db):
+    """Обсяг 9,690009 т не має перетворюватись на 9,69 у вивантаженні."""
+    from backend.services import exporter
+
+    calc = {
+        "object": {"name": "Тест", "address": "", "city": "Полтава", "region": "",
+                   "customer": "", "doc_code": ""},
+        "estimates": [{"code": "01", "title": "К", "totals": {"labor": 0, "material": 0,
+                                                              "machines": 0, "total": 0},
+                       "divisions": [{"code": "1", "title": "Р",
+                                      "totals": {"labor": 0, "material": 0,
+                                                 "machines": 0, "total": 0},
+                                      "positions": [{
+                                          "number": 1, "name": "Навантаження сміття вручну",
+                                          "unit": "т", "quantity": 9.690009,
+                                          "labor_price": 380.0, "material_price": 0.0,
+                                          "machines_price": 0.0, "price_source": "catalog",
+                                          "totals": {"unit_price": 380.0, "labor_total": 3682.2,
+                                                     "material_total": 0.0, "machines_total": 0.0,
+                                                     "total": 3682.2}}]}]}],
+        "lines": [{"key": "total", "label": "Усього", "value": 3682.2}],
+        "settings": {},
+    }
+    assert exporter._position_cells(calc["estimates"][0]["divisions"][0]["positions"][0])[3] \
+        == 9.690009
+    assert "9,690009" in exporter.to_html(calc) or "9.690009" in exporter.to_html(calc)
+
+    import io
+
+    from openpyxl import load_workbook
+    ws = load_workbook(io.BytesIO(exporter.to_xlsx(calc))).active
+    quantities = [ws.cell(row=r, column=4).value for r in range(1, ws.max_row + 1)]
+    assert 9.690009 in quantities
