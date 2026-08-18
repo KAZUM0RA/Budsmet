@@ -11,9 +11,12 @@ from .normalize import clean_text, normalize_unit
 
 # Порядок джерел ціни.
 STRATEGIES = {
+    # Інтернет лише там, де ні історія, ні довідник не знають роботи.
+    # Найощадніший режим: платні пошукові сервіси рахують кожен запит.
+    "web_fallback": ["history", "catalog", "web"],
     "history_first": ["history", "web", "catalog"],   # спершу свої старі кошториси
     "web_first": ["web", "history", "catalog"],       # спершу ринок в інтернеті
-    "catalog_only": ["catalog"],                      # тільки довідник
+    "catalog_only": ["catalog"],                      # тільки довідник, без мережі
 }
 DEFAULT_STRATEGY = "history_first"
 
@@ -99,7 +102,8 @@ def remember_price(name: str, unit: str, city: str, region: str, labor: float,
 # ------------------------------------------------------------------ визначення ціни
 
 def resolve_price(name: str, unit: str, city: str = "", region: str = "",
-                  strategy: str = DEFAULT_STRATEGY, use_web_cache: bool = True) -> PriceResolution:
+                  strategy: str = DEFAULT_STRATEGY, use_web_cache: bool = True,
+                  budget: web_prices.WebBudget | None = None) -> PriceResolution:
     """Головна функція: повертає ціну за одиницю та джерело, з якого вона взята."""
     unit = normalize_unit(unit)
     factor, region_label = catalog.region_factor(city, region)
@@ -119,7 +123,8 @@ def resolve_price(name: str, unit: str, city: str = "", region: str = "",
                                "last_used": hit["last_used"]}
                 break
         elif source == "web":
-            hit = web_prices.lookup(name, unit, city, region, use_cache=use_web_cache)
+            hit = web_prices.lookup(name, unit, city, region, use_cache=use_web_cache,
+                                    budget=budget)
             if hit.found:
                 res.labor, res.material = hit.labor, hit.material
                 res.machines = 0.0

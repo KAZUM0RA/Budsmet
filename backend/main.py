@@ -110,11 +110,15 @@ def meta() -> dict:
     return {
         "defaults": config.DEFAULTS,
         "strategies": [
+            {"key": "web_fallback",
+             "label": "Історія, довідник, а інтернет — лише для невідомих робіт (ощадно)"},
             {"key": "history_first", "label": "Спершу історія, потім інтернет, потім довідник"},
             {"key": "web_first", "label": "Спершу інтернет, потім історія, потім довідник"},
             {"key": "catalog_only", "label": "Тільки довідник розцінок"},
         ],
-        "web_provider": web_prices.provider_status(),
+        "web_provider": {**web_prices.provider_status(),
+                         "max_queries_per_run": config.WEB_MAX_QUERIES,
+                         "cache_days": config.WEB_CACHE_DAYS},
         "regions": sorted(regions["regions"]),
         "cities": sorted(regions["cities"]),
         "categories": catalog.categories(),

@@ -170,6 +170,9 @@ SERPAPI_KEY=ваш_ключ
 sudo systemctl restart budsmet
 ```
 
+Де взяти ключ і скільки запитів це витрачає — у
+[`docs/internet-prices.md`](../../docs/internet-prices.md).
+
 ---
 
 ## Якщо щось не працює

@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 
-from .. import db
+from .. import config, db
 from . import catalog, pricing
+from .web_prices import WebBudget
 from .importer import ImportedDocument
 from .normalize import clean_text, normalize_unit, parse_number
 
@@ -230,6 +231,9 @@ def reprice_object(object_id: int, strategy: str | None = None, keep_manual: boo
     if obj is None:
         raise LookupError("Об'єкт не знайдено")
     strategy = strategy or obj["settings"].get("price_strategy", pricing.DEFAULT_STRATEGY)
+    # Один бюджет живих запитів на весь перерахунок — щоб великий кошторис
+    # не вичерпав місячний ліміт пошукового сервісу за один клік.
+    budget = WebBudget(limit=config.WEB_MAX_QUERIES)
     stats = {"total": 0, "priced": 0, "skipped_manual": 0, "not_found": 0,
              "by_source": {}, "strategy": strategy}
 
@@ -241,7 +245,8 @@ def reprice_object(object_id: int, strategy: str | None = None, keep_manual: boo
                     stats["skipped_manual"] += 1
                     continue
                 res = pricing.resolve_price(position["name"], position["unit"], obj["city"],
-                                            obj["region"], strategy, use_web_cache=use_web_cache)
+                                            obj["region"], strategy,
+                                            use_web_cache=use_web_cache, budget=budget)
                 if res.source == "none":
                     stats["not_found"] += 1
                 else:
@@ -254,6 +259,7 @@ def reprice_object(object_id: int, strategy: str | None = None, keep_manual: boo
                     (res.labor, res.material, res.machines, res.source, res.match_code,
                      res.match_score, position["id"]))
     db.execute("UPDATE objects SET updated_at = datetime('now') WHERE id = ?", (object_id,))
+    stats["web"] = budget.to_dict()
     return stats
 
 

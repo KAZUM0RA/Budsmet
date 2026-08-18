@@ -18,7 +18,8 @@ def test_health_and_meta(client):
     assert client.get("/api/health").json()["status"] == "ok"
     meta = client.get("/api/meta").json()
     assert meta["catalog_size"] > 150
-    assert {s["key"] for s in meta["strategies"]} == {"history_first", "web_first", "catalog_only"}
+    assert {s["key"] for s in meta["strategies"]} == {
+        "web_fallback", "history_first", "web_first", "catalog_only"}
     assert meta["web_provider"]["enabled"] is False   # типово інтернет-аналіз вимкнено
 
 

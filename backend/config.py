@@ -28,6 +28,11 @@ GOOGLE_CSE_KEY = os.environ.get("GOOGLE_CSE_KEY", "")
 GOOGLE_CSE_CX = os.environ.get("GOOGLE_CSE_CX", "")
 CUSTOM_PRICE_ENDPOINT = os.environ.get("BUDSMET_PRICE_ENDPOINT", "")
 WEB_CACHE_DAYS = int(os.environ.get("BUDSMET_WEB_CACHE_DAYS", "14"))
+# Скільки живих запитів до пошуку дозволено на одне перерахування кошторису.
+# Безкоштовні тарифи пошукових сервісів вимірюються сотнями запитів на місяць,
+# тому без обмеження одне перерахування великого об'єкта вичерпало б їх одразу.
+# Відповіді з кешу не рахуються. 0 — без обмеження.
+WEB_MAX_QUERIES = int(os.environ.get("BUDSMET_WEB_MAX_QUERIES", "40"))
 WEB_TIMEOUT = float(os.environ.get("BUDSMET_WEB_TIMEOUT", "12"))
 
 # Скільки останніх записів історії враховувати при усередненні ціни.

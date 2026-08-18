@@ -3,9 +3,12 @@
 Провайдери підключаються через змінну середовища `BUDSMET_PRICE_PROVIDER`:
 
     off      — вимкнено (типово): ціни беруться з історії та довідника;
-    serpapi  — SerpAPI (SERPAPI_KEY);
-    brave    — Brave Search API (BRAVE_API_KEY);
+    serpapi  — SerpAPI (SERPAPI_KEY); станом на 2026 єдиний із безкоштовним
+               тарифом без прив'язки картки — 250 запитів на місяць;
+    brave    — Brave Search API (BRAVE_API_KEY); безкоштовний тариф скасовано
+               у лютому 2026, потрібна картка;
     google   — Google Programmable Search (GOOGLE_CSE_KEY + GOOGLE_CSE_CX);
+               закрито для нових користувачів, вимикається 01.01.2027;
     custom   — власний HTTP-ендпоінт (BUDSMET_PRICE_ENDPOINT), який повертає
                {"results": [{"title": ..., "snippet": ..., "url": ...}]}.
 
@@ -58,10 +61,39 @@ class WebPrice:
     provider: str = ""
     samples: list = field(default_factory=list)
     cached: bool = False
+    skipped: str = ""          # причина, чому запит не виконувався
 
     @property
     def found(self) -> bool:
         return bool(self.labor or self.material)
+
+
+@dataclass
+class WebBudget:
+    """Обмежувач живих запитів у межах одного перерахунку кошторису.
+
+    Безкоштовні тарифи пошукових сервісів дають сотні запитів на місяць, а
+    кошторис може містити сотні позицій. Без такого обмежувача одне
+    перерахування вичерпало б місячний ліміт.
+    """
+
+    limit: int = 0             # 0 — без обмеження
+    used: int = 0              # виконано живих запитів
+    blocked: int = 0           # пропущено через вичерпаний ліміт
+    from_cache: int = 0        # відповіді з кешу (ліміт не витрачають)
+
+    def allow(self) -> bool:
+        if self.limit and self.used >= self.limit:
+            self.blocked += 1
+            return False
+        return True
+
+    def spend(self) -> None:
+        self.used += 1
+
+    def to_dict(self) -> dict:
+        return {"limit": self.limit, "used": self.used,
+                "blocked": self.blocked, "from_cache": self.from_cache}
 
 
 def _to_float(raw: str) -> float | None:
@@ -199,18 +231,26 @@ def _aggregate(samples: list[PriceSample]) -> tuple[float, float]:
 
 
 def lookup(name: str, unit: str, city: str = "", region: str = "",
-           use_cache: bool = True) -> WebPrice:
+           use_cache: bool = True, budget: WebBudget | None = None) -> WebPrice:
     """Шукає ринкову ціну роботи в інтернеті по місту. Повертає порожній WebPrice, якщо вимкнено."""
     status = provider_status()
     if not status["enabled"]:
-        return WebPrice(provider=status["provider"])
+        return WebPrice(provider=status["provider"], skipped="провайдер вимкнено")
 
     key = work_key(name, unit)
     provider_name = status["provider"]
     if use_cache:
         cached = _cache_get(key, city, provider_name)
         if cached is not None:
+            if budget is not None:
+                budget.from_cache += 1
             return cached
+
+    # Ліміт живих запитів вичерпано — далі ціни беруться з інших джерел.
+    if budget is not None and not budget.allow():
+        return WebPrice(provider=provider_name, skipped="вичерпано ліміт запитів")
+    if budget is not None:
+        budget.spend()
 
     place = city or region or "Україна"
     query = f"{name} ціна {place} грн за {unit or 'одиницю'}"
