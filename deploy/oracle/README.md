@@ -1,0 +1,174 @@
+# Розгортання Budsmet на Oracle Cloud Always Free
+
+Покрокова інструкція: від реєстрації до робочого сайту з паролем і HTTPS.
+Разом — приблизно 40 хвилин, з яких 30 займає реєстрація в Oracle.
+
+Що вийде: віртуальна машина, яка працює цілодобово і безкоштовно, з вашим
+застосунком за адресою на кшталт `https://koshtorys.duckdns.org`, захищеною
+логіном і паролем, зі щоденною резервною копією бази.
+
+---
+
+## Крок 1. Реєстрація в Oracle Cloud
+
+1. Відкрийте <https://www.oracle.com/cloud/free/> → **Start for free**.
+2. Заповніть анкету. **Потрібна платіжна картка** — Oracle списує і одразу
+   повертає близько $1 для перевірки, що ви існуєте. Тариф Always Free сам по
+   собі не переходить у платний: якщо перевищите ліміти, ресурси зупиняться, а
+   не виставлять рахунок.
+3. **Регіон обирайте один раз і назавжди** — змінити його потім не можна.
+   Беріть найближчий до вас (Frankfurt, Amsterdam або Zurich).
+4. Дочекайтесь листа «Your Oracle Cloud account is ready» (5–30 хвилин).
+
+## Крок 2. Ключ для входу на сервер
+
+На своєму комп'ютері (PowerShell у Windows, Термінал у macOS/Linux):
+
+```bash
+ssh-keygen -t ed25519 -C "budsmet"
+```
+
+Тричі натисніть Enter. Далі покажіть відкриту частину ключа — вона знадобиться
+на наступному кроці:
+
+```bash
+cat ~/.ssh/id_ed25519.pub          # Windows: type $env:USERPROFILE\.ssh\id_ed25519.pub
+```
+
+## Крок 3. Створення віртуальної машини
+
+У консолі Oracle: **☰ Menu → Compute → Instances → Create instance**.
+
+| Поле | Значення |
+|---|---|
+| Name | `budsmet` |
+| Image | **Canonical Ubuntu 24.04** (кнопка *Change image*) |
+| Shape | **Ampere → VM.Standard.A1.Flex**, **2 OCPU**, **12 GB** пам'яті |
+| Primary VNIC → Assign public IPv4 | має бути увімкнено |
+| Add SSH keys | **Paste public keys** → вставте вміст `id_ed25519.pub` |
+
+Переконайтесь, що біля форми світиться позначка **Always Free eligible**.
+Натисніть **Create** і запишіть **Public IP address** зі сторінки машини.
+
+> **Якщо пише «Out of host capacity»** — безкоштовних машин Ampere у вашому
+> регіоні зараз немає. Це буває часто. Варіанти: спробувати іншу Availability
+> Domain у тій самій формі, повторити через кілька годин, або взяти замість
+> Ampere дві машини **VM.Standard.E2.1.Micro** (1 ГБ пам'яті) — застосунку
+> цього теж вистачить, просто працюватиме повільніше.
+
+## Крок 4. Відкрити порти 80 і 443
+
+Без цього сайт не відкриється — Oracle типово впускає лише SSH.
+
+**☰ Menu → Networking → Virtual cloud networks** → ваша мережа → **Subnets** →
+підмережа → **Security Lists** → `Default Security List` → **Add Ingress Rules**:
+
+| Source CIDR | IP Protocol | Destination Port Range |
+|---|---|---|
+| `0.0.0.0/0` | TCP | `80,443` |
+
+## Крок 5. Безкоштовне доменне ім'я (для HTTPS)
+
+Сертифікат Let's Encrypt не видають на голу IP-адресу, тож потрібне ім'я.
+
+1. Відкрийте <https://www.duckdns.org>, увійдіть через Google або GitHub.
+2. Придумайте піддомен, напр. `koshtorys` → отримаєте `koshtorys.duckdns.org`.
+3. У полі **current ip** впишіть Public IP вашої машини → **update ip**.
+
+Крок необов'язковий: без домену все працюватиме, але без HTTPS — пароль
+передаватиметься у відкритому вигляді.
+
+## Крок 6. Встановлення
+
+Підключіться до машини (підставте свій IP):
+
+```bash
+ssh ubuntu@ВАШ_IP
+```
+
+І виконайте одну команду — вона встановить усе: Python, залежності, nginx,
+шрифти для PDF, службу автозапуску, пароль, HTTPS і щоденні резервні копії.
+
+```bash
+sudo apt-get update && sudo apt-get install -y git && \
+sudo git clone --depth 1 --branch claude/web-app-cost-estimates-l1x9ef \
+  https://github.com/KAZUM0RA/Budsmet.git /opt/budsmet/app && \
+sudo /opt/budsmet/app/deploy/oracle/setup.sh \
+  --domain koshtorys.duckdns.org \
+  --login shef \
+  --email ваша@пошта
+```
+
+Замініть `koshtorys.duckdns.org` на свій домен, `shef` — на бажаний логін.
+Пароль можна задати через `--password`, інакше він згенерується і **покажеться
+наприкінці один раз** — збережіть його.
+
+Без домену: приберіть рядок `--domain …` — сайт відкриватиметься за IP по HTTP.
+
+Наприкінці скрипт покаже адресу, логін, пароль і стан служби. Відкривайте
+адресу в браузері — застосунок готовий до роботи.
+
+---
+
+## Обслуговування
+
+```bash
+# оновити застосунок до останньої версії (база зберігається)
+sudo /opt/budsmet/app/deploy/oracle/update.sh
+
+# резервна копія вручну (щоденна вже налаштована на 03:30)
+sudo /opt/budsmet/app/deploy/oracle/backup.sh
+
+# відновити базу з копії
+sudo /opt/budsmet/app/deploy/oracle/restore.sh /var/backups/budsmet/budsmet-20260818-033000.db.gz
+
+# журнал роботи, перезапуск, стан
+sudo journalctl -u budsmet -f
+sudo systemctl restart budsmet
+sudo systemctl status budsmet
+
+# змінити пароль входу
+sudo htpasswd /etc/nginx/budsmet.htpasswd shef
+```
+
+### Копію бази — до себе на комп'ютер
+
+Уся ваша робота лежить в одному файлі. Час від часу забирайте його з сервера:
+
+```bash
+scp ubuntu@ВАШ_IP:/var/backups/budsmet/budsmet-*.db.gz ./
+```
+
+> **Не копіюйте `/var/lib/budsmet/budsmet.db` напряму через `cp` або `scp`.**
+> База працює в режимі WAL: свіжі записи лежать у сусідньому файлі `-wal`, і
+> копія самого лише `.db` виявиться порожньою. `backup.sh` робить копію
+> правильно — засобами самого SQLite, без зупинки застосунку.
+
+### Ключі для аналізу цін в інтернеті
+
+Якщо згодом захочете увімкнути пошук ринкових цін, впишіть ключі у
+`/etc/budsmet.env` і перезапустіть службу:
+
+```bash
+sudo nano /etc/budsmet.env
+```
+```
+BUDSMET_PRICE_PROVIDER=serpapi
+SERPAPI_KEY=ваш_ключ
+```
+```bash
+sudo systemctl restart budsmet
+```
+
+---
+
+## Якщо щось не працює
+
+| Симптом | Причина і що робити |
+|---|---|
+| Сайт не відкривається, браузер «крутиться» | Не додано Ingress Rule у Security List (крок 4). Перевірте: `curl -I http://ВАШ_IP` з іншого комп'ютера |
+| `curl http://127.0.0.1:8000/api/health` на сервері працює, ззовні — ні | Те саме: закриті порти в консолі Oracle або локальний фаєрвол. Скрипт відкриває їх сам; перевірити: `sudo iptables -L INPUT -n --line-numbers` |
+| certbot не видав сертифікат | Домен ще не вказує на IP машини. Перевірте `dig +short koshtorys.duckdns.org` — має збігатись із Public IP. Потім: `sudo certbot --nginx -d koshtorys.duckdns.org` |
+| Служба не стартує | `sudo journalctl -u budsmet -n 50` покаже причину |
+| Кирилиця в PDF нечитабельна | `sudo apt-get install -y fonts-dejavu-core && sudo systemctl restart budsmet` (Excel від цього не залежить) |
+| Машину зупинено через ліміти | З 18.08.2026 безкоштовний ліміт Ampere — 2 OCPU / 12 ГБ. Перевірте, що не створили зайвих машин |

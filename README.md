@@ -35,6 +35,24 @@ pip install -r requirements.txt
 
 Документація API — <http://127.0.0.1:8000/docs>.
 
+## Розгортання на сервері
+
+Комплект для безкоштовної віртуальної машини Oracle Cloud Always Free —
+покрокова інструкція та скрипти: [`deploy/oracle/README.md`](deploy/oracle/README.md).
+
+Встановлення одною командою на свіжій машині з Ubuntu 24.04:
+
+```bash
+sudo apt-get update && sudo apt-get install -y git && \
+sudo git clone --depth 1 --branch claude/web-app-cost-estimates-l1x9ef \
+  https://github.com/KAZUM0RA/Budsmet.git /opt/budsmet/app && \
+sudo /opt/budsmet/app/deploy/oracle/setup.sh --domain ваш.домен --login ваш_логін
+```
+
+Скрипт налаштує службу автозапуску, nginx зі входом за паролем, HTTPS від
+Let's Encrypt, шрифти для кирилиці в PDF і щоденну резервну копію бази.
+Обслуговування — `update.sh`, `backup.sh`, `restore.sh` у тому ж каталозі.
+
 ## Аналіз цін в інтернеті
 
 Типово вимкнено — застосунок працює офлайн на історії та довіднику. Щоб увімкнути,
