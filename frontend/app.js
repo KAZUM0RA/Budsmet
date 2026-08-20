@@ -54,6 +54,7 @@ function showView(name) {
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
   $$('.nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
   if (name === 'catalog') loadCatalog();
+  if (name === 'site') loadSitePrices();
   if (name === 'history') loadHistory();
 }
 
@@ -71,14 +72,16 @@ async function loadMeta() {
   $('#set-strategy').innerHTML = options;
   $('#imp-strategy').innerHTML = options;
 
+  const site = state.meta.price_site || { count: 0 };
   const badge = $('#provider-badge');
-  badge.classList.toggle('on', provider.enabled);
-  badge.textContent = provider.enabled
-    ? `Інтернет-ціни: ${provider.provider}`
-    : `Інтернет-ціни вимкнено · ${state.meta.catalog_size} розцінок у довіднику`;
-  badge.title = provider.enabled
-    ? 'Ціни можуть уточнюватись пошуком в інтернеті по місту об\'єкта'
-    : provider.reason + '. Використовуються історія та довідник.';
+  badge.classList.toggle('on', site.count > 0 || provider.enabled);
+  const parts = [`довідник: ${state.meta.catalog_size}`];
+  parts.push(site.count ? `прайс сайту: ${site.count}` : 'прайс сайту не завантажено');
+  if (provider.enabled) parts.push(`пошук: ${provider.provider}`);
+  badge.textContent = parts.join(' · ');
+  badge.title = site.count
+    ? `Ціни беруться з ${site.url}. Оновити — у вкладці «Прайс сайту».`
+    : 'Відкрийте вкладку «Прайс сайту» і натисніть «Оновити з сайту».';
 }
 
 async function loadObjects(selectId) {
@@ -395,6 +398,16 @@ async function repriceObject() {
 
 /* ------------------------------------------------------------------- імпорт */
 
+/** Кнопка «Додати об'єкт з відомості»: одразу відкриває вибір файлу. */
+function startImportFlow() {
+  showView('import');
+  $('#import-preview').classList.add('hidden');
+  state.preview = null;
+  state.previewFile = null;
+  $('#file-input').value = '';
+  $('#file-input').click();
+}
+
 function setupImport() {
   const zone = $('#dropzone');
   const input = $('#file-input');
@@ -588,6 +601,56 @@ function catalogModal(item = {}) {
   };
 }
 
+/* --------------------------------------------------------------- прайс сайту */
+
+async function loadSitePrices() {
+  const q = $('#site-search').value.trim();
+  const data = await api(`/api/price-site?q=${encodeURIComponent(q)}&limit=300`);
+  const age = data.age_days;
+  const stale = age === null || age >= data.refresh_days;
+
+  $('#site-status').innerHTML = `
+    <div><span class="lbl">Джерело</span>
+      <a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url || '—')}</a></div>
+    <div><span class="lbl">Позицій</span><b>${data.count}</b></div>
+    <div><span class="lbl">Розділів</span><b>${data.categories.length}</b></div>
+    <div><span class="lbl">Оновлено</span>
+      <b class="${stale ? 'stale' : ''}">${
+        age === null ? 'ще не завантажувався' : `${Math.floor(age)} дн. тому`}</b></div>`;
+
+  $('#site-table').innerHTML = data.items.length ? `<table class="grid"><thead><tr>
+      <th>Найменування роботи</th><th style="width:80px">Од.</th>
+      <th class="money" style="width:120px">Ціна, грн</th>
+      <th style="width:230px">Розділ</th></tr></thead><tbody>
+      ${data.items.map((i) => `<tr>
+        <td>${esc(i.name)}</td><td class="ctr">${esc(i.unit)}</td>
+        <td class="money">${money(i.price)}</td>
+        <td class="muted">${esc(i.category || '')}</td></tr>`).join('')}
+      </tbody></table>${data.matched > data.items.length
+        ? `<div class="muted" style="padding:10px">Показано ${data.items.length} з ${data.matched}</div>` : ''}`
+    : `<div class="empty"><p class="muted">Прайс ще не завантажено. Натисніть «Оновити з сайту».</p></div>`;
+}
+
+async function refreshSitePrices() {
+  const button = $('#btn-site-refresh');
+  const original = button.textContent;
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span>Завантажую…';
+  try {
+    const result = await api('/api/price-site/refresh', { method: 'POST' });
+    if (result.error) {
+      toast(`Не вдалося: ${result.error}`, 'err');
+    } else {
+      toast(`Завантажено ${result.saved} позицій зі ${result.pages || 1} сторінок`, 'ok');
+    }
+    await loadSitePrices();
+    await loadMeta();
+  } catch (err) { toast(err.message, 'err'); } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
 /* ------------------------------------------------------------------ історія */
 
 async function loadHistory() {
@@ -647,6 +710,8 @@ function init() {
   $$('[data-goto]').forEach((b) => { b.onclick = () => showView(b.dataset.goto); });
   $('#btn-new-object').onclick = newObjectModal;
   $('#btn-new-object-2').onclick = newObjectModal;
+  $('#btn-object-from-vob').onclick = startImportFlow;
+  $('#btn-object-from-vob-2').onclick = startImportFlow;
   $('#btn-cat-new').onclick = () => catalogModal();
   $('#btn-add-position').onclick = addPosition;
   $('#btn-reprice').onclick = repriceObject;
@@ -692,6 +757,9 @@ function init() {
   let catTimer;
   $('#cat-search').oninput = () => { clearTimeout(catTimer); catTimer = setTimeout(loadCatalog, 220); };
   $('#cat-category').onchange = loadCatalog;
+  $('#btn-site-refresh').onclick = refreshSitePrices;
+  let siteTimer;
+  $('#site-search').oninput = () => { clearTimeout(siteTimer); siteTimer = setTimeout(loadSitePrices, 220); };
   let histTimer;
   $('#hist-search').oninput = () => { clearTimeout(histTimer); histTimer = setTimeout(loadHistory, 220); };
 

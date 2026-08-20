@@ -19,7 +19,13 @@ DEFAULTS = {
     "round_to": 2,
 }
 
-# --- Інтернет-аналіз цін ---
+# --- Прайс-лист із сайту ---
+# Сторінка з цінами на роботи; завантажується цілком і зберігається в базі,
+# тому ключі та ліміти запитів тут не потрібні. Порожнє значення — вимкнено.
+PRICE_SITE = os.environ.get("BUDSMET_PRICE_SITE", "https://www.rabotniki.ua/uk/price").strip()
+SITE_REFRESH_DAYS = int(os.environ.get("BUDSMET_SITE_REFRESH_DAYS", "30"))
+
+# --- Інтернет-аналіз цін (пошукові сервіси) ---
 # Провайдер задається змінною BUDSMET_PRICE_PROVIDER: off | serpapi | brave | google | custom
 PRICE_PROVIDER = os.environ.get("BUDSMET_PRICE_PROVIDER", "off").strip().lower()
 SERPAPI_KEY = os.environ.get("SERPAPI_KEY", "")

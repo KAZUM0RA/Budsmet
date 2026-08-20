@@ -44,6 +44,11 @@ input:focus,select:focus{outline:2px solid #c8d8f5;outline-offset:-1px}
 .obj-list .oname{color:#fff;display:block;font-size:13px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .obj-list .osub{font-size:11px;color:#9fb5d8}
+.side-action{display:flex;align-items:center;gap:8px;width:100%;margin-bottom:8px;
+  background:rgba(255,255,255,.1);color:#eaf1fb;border:1px solid rgba(255,255,255,.18);
+  padding:9px 11px;font-size:13px;text-align:left}
+.side-action:hover{background:rgba(255,255,255,.18);filter:none}
+.side-action-icon{font-size:15px}
 .side-foot{border-top:1px solid rgba(255,255,255,.14);padding-top:10px}
 .badge{font-size:11px;color:#9fb5d8;padding:6px 8px;background:rgba(0,0,0,.15);border-radius:8px}
 .badge.on{color:#bff0d0}
@@ -135,6 +140,14 @@ table.totals tr.grand td{background:var(--total);font-weight:700;font-size:16px}
 .preview-actions{display:flex;gap:8px;align-items:center}
 .warn{background:#fff6e6;border:1px solid #f0d9a8;color:#8a5d0d;padding:8px 12px;
   border-radius:8px;margin-bottom:10px;font-size:12.5px}
+
+.site-status{display:flex;gap:22px;flex-wrap:wrap;align-items:center;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--radius);padding:12px 16px;margin-bottom:14px;
+  box-shadow:var(--shadow)}
+.site-status b{display:block;font-size:17px}
+.site-status span.lbl{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.site-status a{color:var(--brand-2);word-break:break-all}
+.site-status .stale{color:var(--danger)}
 
 /* ------------------------------------------------------------ довідник */
 .cat-bar{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}

@@ -33,3 +33,13 @@ def test_number_sign_is_not_mangled():
 def test_stemming_groups_word_forms():
     assert stem_phrase("Демонтаж розеток").startswith("демонтаж")
     assert stem_phrase("Улаштування стяжки") == stem_phrase("улаштування стяжки")
+
+
+def test_spaced_and_dotted_unit_forms():
+    """Прайси пишуть одиниці як завгодно: «кв. м», «пог. м», «куб.м»."""
+    for raw in ("кв.м", "кв м", "кв. м", "м.кв", "м кв", "КВ.М", "м²"):
+        assert normalize_unit(raw) == "м2", raw
+    for raw in ("куб.м", "куб. м", "м.куб", "м³"):
+        assert normalize_unit(raw) == "м3", raw
+    for raw in ("пог.м", "пог. м", "п.м", "м.п", "мп"):
+        assert normalize_unit(raw) == "м", raw

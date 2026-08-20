@@ -12,8 +12,11 @@ os.environ["BUDSMET_DB"] = str(_TMP_DB)
 
 import pytest  # noqa: E402
 
-from backend import db  # noqa: E402
-from backend.services import catalog  # noqa: E402
+from backend import config, db  # noqa: E402
+from backend.services import catalog, price_sites  # noqa: E402
+
+# Жоден тест не має звертатись до справжнього сайту прайса.
+config.PRICE_SITE = ""
 
 SAMPLES = ROOT / "samples"
 
@@ -30,9 +33,11 @@ def clean_db():
     """Порожні таблиці перед тестом, що пише в БД."""
     with db.transaction() as conn:
         for table in ("positions", "divisions", "estimates", "objects",
-                      "price_history", "web_price_cache", "catalog_overrides"):
+                      "price_history", "web_price_cache", "catalog_overrides",
+                      "site_prices"):
             conn.execute(f"DELETE FROM {table}")
     catalog.invalidate()
+    price_sites.invalidate()
     yield
 
 

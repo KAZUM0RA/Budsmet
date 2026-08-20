@@ -16,14 +16,19 @@
       <button class="nav-btn active" data-view="objects">Об'єкти</button>
       <button class="nav-btn" data-view="import">Імпорт обсягів</button>
       <button class="nav-btn" data-view="catalog">Довідник цін</button>
+      <button class="nav-btn" data-view="site">Прайс сайту</button>
       <button class="nav-btn" data-view="history">Історія цін</button>
     </nav>
 
     <div class="obj-list-wrap">
       <div class="side-head">
         <span>Мої об'єкти</span>
-        <button id="btn-new-object" class="mini" title="Створити об'єкт">+</button>
+        <button id="btn-new-object" class="mini" title="Створити порожній об'єкт">+</button>
       </div>
+      <button id="btn-object-from-vob" class="side-action"
+              title="Завантажити відомість обсягів робіт і одразу отримати порахований об'єкт">
+        <span class="side-action-icon">📄</span> Додати об'єкт з відомості
+      </button>
       <ul id="object-list" class="obj-list"></ul>
     </div>
 
@@ -37,11 +42,12 @@
     <section id="view-objects" class="view active">
       <div id="object-empty" class="empty">
         <h2>Почніть з об'єкта</h2>
-        <p>Створіть об'єкт вручну і додайте роботи з обсягами — програма підбере ціни.
-           Або завантажте готову відомість обсягів робіт у вкладці «Імпорт обсягів».</p>
+        <p>Завантажте готову відомість обсягів робіт — програма розбере її, підбере ціни
+           і поверне заповнений кошторис. Або створіть порожній об'єкт і додавайте роботи
+           вручну, вписуючи обсяги.</p>
         <div class="empty-actions">
-          <button id="btn-new-object-2" class="primary">Створити об'єкт</button>
-          <button class="ghost" data-goto="import">Завантажити відомість</button>
+          <button id="btn-object-from-vob-2" class="primary">Додати об'єкт з відомості</button>
+          <button id="btn-new-object-2" class="ghost">Створити порожній об'єкт</button>
         </div>
       </div>
 
@@ -161,6 +167,22 @@
         <button id="btn-cat-new" class="primary">Додати розцінку</button>
       </div>
       <div id="catalog-table" class="prev-table"></div>
+    </section>
+
+    <!-- ----------------------------------------------------- ПРАЙС САЙТУ -->
+    <section id="view-site" class="view">
+      <h1>Прайс-лист із сайту</h1>
+      <p class="lead">Ціни на роботи завантажуються зі сторінки прайса цілком і зберігаються
+        локально — ключі та ліміти запитів не потрібні. Під час розрахунку до них
+        застосовується регіональний коефіцієнт міста об'єкта.</p>
+
+      <div class="site-status" id="site-status"></div>
+
+      <div class="cat-bar">
+        <input id="site-search" type="search" placeholder="Пошук у прайсі…">
+        <button id="btn-site-refresh" class="primary">Оновити з сайту</button>
+      </div>
+      <div id="site-table" class="prev-table"></div>
     </section>
 
     <!-- -------------------------------------------------------- ІСТОРІЯ -->

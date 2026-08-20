@@ -5,23 +5,26 @@ import statistics
 from dataclasses import asdict, dataclass, field
 
 from .. import config, db
-from . import catalog, web_prices
+from . import catalog, price_sites, web_prices
 from .matcher import work_key
 from .normalize import clean_text, normalize_unit
 
 # Порядок джерел ціни.
 STRATEGIES = {
-    # Інтернет лише там, де ні історія, ні довідник не знають роботи.
-    # Найощадніший режим: платні пошукові сервіси рахують кожен запит.
-    "web_fallback": ["history", "catalog", "web"],
-    "history_first": ["history", "web", "catalog"],   # спершу свої старі кошториси
-    "web_first": ["web", "history", "catalog"],       # спершу ринок в інтернеті
-    "catalog_only": ["catalog"],                      # тільки довідник, без мережі
+    # Прайс сайту — головне зовнішнє джерело: одне завантаження дає сотні
+    # розцінок, ключі та ліміти запитів не потрібні.
+    "site_first": ["history", "site", "catalog", "web"],
+    # Інтернет-пошук лише там, де решта джерел мовчить (кожен запит платний).
+    "web_fallback": ["history", "site", "catalog", "web"],
+    "history_first": ["history", "site", "web", "catalog"],
+    "web_first": ["web", "history", "site", "catalog"],
+    "catalog_only": ["catalog"],                      # без будь-якої мережі
 }
 DEFAULT_STRATEGY = "history_first"
 
 SOURCE_LABELS = {
     "history": "історія (старі кошториси)",
+    "site": "прайс сайту",
     "web": "інтернет",
     "catalog": "довідник",
     "manual": "ручне введення",
@@ -131,6 +134,16 @@ def resolve_price(name: str, unit: str, city: str = "", region: str = "",
                 res.source = "web"
                 res.details = {"provider": hit.provider, "cached": hit.cached,
                                "samples": hit.samples[:6]}
+                break
+        elif source == "site":
+            hit = price_sites.lookup(name, unit)
+            if hit is not None and hit["labor"]:
+                res.labor = round(hit["labor"] * factor, 2)
+                res.material, res.machines = 0.0, 0.0
+                res.source = "site"
+                res.details = {"site": hit["site"], "matched": hit["matched_name"],
+                               "unit": hit["matched_unit"], "category": hit["category"],
+                               "score": hit["score"], "factor": factor}
                 break
         elif source == "catalog" and match is not None:
             item = match.item

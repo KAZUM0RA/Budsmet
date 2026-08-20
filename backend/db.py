@@ -94,6 +94,20 @@ CREATE TABLE IF NOT EXISTS web_price_cache (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_webcache ON web_price_cache(work_key, city, provider);
 
+-- Прайс-лист, завантажений із сайту (джерело цін «сайт»).
+CREATE TABLE IF NOT EXISTS site_prices (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    site          TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    unit          TEXT DEFAULT '',
+    price         REAL DEFAULT 0,
+    category      TEXT DEFAULT '',
+    url           TEXT DEFAULT '',
+    work_key      TEXT DEFAULT '',
+    fetched_at    TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_site_prices ON site_prices(site, work_key);
+
 -- Користувацькі розцінки, що доповнюють/перекривають JSON-довідник.
 CREATE TABLE IF NOT EXISTS catalog_overrides (
     code          TEXT PRIMARY KEY,

@@ -9,21 +9,27 @@ from .pricing import SOURCE_LABELS
 
 TITLE = "Локальний кошторис"
 # (повна назва колонки, ширина в XLSX, коротка назва для вузьких колонок PDF)
+#
+# У документі для замовника лишаються тільки ті колонки, що складаються в
+# арифметику «ціна за одиницю × кількість = вартість». Розкладка ціни на
+# роботи / матеріали / машини та джерело ціни — це робоча кухня кошторисника,
+# вона лишається в інтерфейсі та в підсумковому блоці, але не у видатковій
+# таблиці: інакше «ціна за одиницю» не збігалась би з «вартістю».
 COLUMNS = [
     ("№\nп/п", 6, "№"),
-    ("Найменування робіт та витрат", 62, "Найменування робіт та витрат"),
-    ("Одиниця\nвиміру", 10, "Од.\nвим."),
-    ("Кількість", 11, "К-сть"),
-    ("Ціна за одиницю, грн\nроботи", 13, "Ціна/од.\nроботи"),
-    ("Ціна за одиницю, грн\nматеріали", 13, "Ціна/од.\nматер."),
-    ("Ціна за одиницю, грн\nмашини", 12, "Ціна/од.\nмашини"),
-    ("Ціна за одиницю, грн\nвсього", 13, "Ціна/од.\nвсього"),
-    ("Вартість, грн\nроботи", 14, "Вартість\nроботи"),
-    ("Вартість, грн\nматеріали", 14, "Вартість\nматеріали"),
-    ("Вартість, грн\nмашини", 13, "Вартість\nмашини"),
-    ("Вартість, грн\nвсього", 15, "Вартість\nвсього"),
-    ("Джерело\nціни", 16, "Джерело\nціни"),
+    ("Найменування робіт та витрат", 74, "Найменування робіт та витрат"),
+    ("Одиниця\nвиміру", 12, "Од.\nвим."),
+    ("Кількість", 13, "К-сть"),
+    ("Ціна за одиницю,\nгрн", 18, "Ціна за\nодиницю, грн"),
+    ("Вартість,\nгрн", 20, "Вартість,\nгрн"),
 ]
+
+
+# Індекси колонок (з 1) у скороченій таблиці.
+COL_NAME = 2
+COL_QTY = 4
+COL_UNIT_PRICE = 5
+COL_TOTAL = 6
 
 
 def _money(value) -> float:
@@ -71,21 +77,15 @@ def _rows(calc: dict):
 
 
 def _position_cells(position: dict) -> list:
+    """Рядок позиції для документа: ціна за одиницю — повна, разом із матеріалами."""
     totals = position.get("totals", {})
     return [
         position.get("number", ""),
         position.get("name", ""),
         position.get("unit", ""),
         _qty(position.get("quantity")),
-        _money(position.get("labor_price")),
-        _money(position.get("material_price")),
-        _money(position.get("machines_price")),
         _money(totals.get("unit_price")),
-        _money(totals.get("labor_total")),
-        _money(totals.get("material_total")),
-        _money(totals.get("machines_total")),
         _money(totals.get("total")),
-        _source_label(position),
     ]
 
 
@@ -162,7 +162,7 @@ def to_xlsx(calc: dict) -> bytes:
 
         totals = data.get("totals", {})
         cell = ws.cell(row=row, column=1, value=data["title"])
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=8)
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=COL_TOTAL - 1)
         fill = {"estimate": est_fill, "division": div_fill}.get(kind, total_fill)
         cell.font = Font(bold=True, size=10 if kind == "estimate" else 9)
         for idx in range(1, len(COLUMNS) + 1):
@@ -170,21 +170,20 @@ def to_xlsx(calc: dict) -> bytes:
             c.fill = fill
             c.border = border
         if kind in ("division_total", "estimate_total"):
-            for offset, key in enumerate(("labor", "material", "machines", "total")):
-                c = ws.cell(row=row, column=9 + offset, value=_money(totals.get(key)))
-                c.number_format = money_fmt
-                c.font = Font(bold=True, size=9)
-                c.alignment = Alignment(horizontal="right")
-                c.fill = fill
-                c.border = border
+            c = ws.cell(row=row, column=COL_TOTAL, value=_money(totals.get("total")))
+            c.number_format = money_fmt
+            c.font = Font(bold=True, size=9)
+            c.alignment = Alignment(horizontal="right")
+            c.fill = fill
+            c.border = border
         row += 1
 
     row += 1
     for line in calc["lines"]:
         label = ws.cell(row=row, column=1, value=("    " if line.get("sub") else "") + line["label"])
         label.font = Font(bold=not line.get("sub"), size=10)
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=11)
-        value = ws.cell(row=row, column=12, value=_money(line["value"]))
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=COL_TOTAL - 1)
+        value = ws.cell(row=row, column=COL_TOTAL, value=_money(line["value"]))
         value.number_format = money_fmt
         value.font = Font(bold=not line.get("sub"), size=10)
         value.alignment = Alignment(horizontal="right")
@@ -259,7 +258,7 @@ def to_pdf(calc: dict) -> bytes:
         story.append(Paragraph(html.escape(line), meta_style))
     story.append(Spacer(1, 4 * mm))
 
-    widths = [9, 104, 16, 21, 23, 23, 21, 23, 26, 26, 23, 28, 24]
+    widths = [10, 132, 20, 26, 32, 38]
     scale = (doc.width) / sum(widths)
     widths = [w * scale for w in widths]
 
@@ -287,19 +286,17 @@ def to_pdf(calc: dict) -> bytes:
         if kind == "position":
             cells = _position_cells(item)
             data.append([str(cells[0]), Paragraph(html.escape(str(cells[1])), cell_style),
-                         str(cells[2]), _fmt_qty(cells[3])] +
-                        [fmt(v) for v in cells[4:12]] +
-                        [Paragraph(html.escape(str(cells[12])), cell_style)])
+                         str(cells[2]), _fmt_qty(cells[3]),
+                         fmt(cells[4]), fmt(cells[5])])
         else:
             totals = item.get("totals", {})
             band = [Paragraph(html.escape(item["title"]), band_style)] + [""] * (len(COLUMNS) - 1)
             if kind in ("division_total", "estimate_total"):
-                for offset, key in enumerate(("labor", "material", "machines", "total")):
-                    band[8 + offset] = fmt(totals.get(key))
+                band[COL_TOTAL - 1] = fmt(totals.get("total"))
             data.append(band)
             color = {"estimate": "#D9E2F3", "division": "#EDF2FA"}.get(kind, "#FFF2CC")
             styles += [("BACKGROUND", (0, idx), (-1, idx), colors.HexColor(color)),
-                       ("SPAN", (0, idx), (7, idx)),
+                       ("SPAN", (0, idx), (COL_TOTAL - 2, idx)),
                        ("FONTNAME", (0, idx), (-1, idx), font_bold)]
         idx += 1
 
@@ -345,21 +342,17 @@ def to_html(calc: dict) -> str:
         if kind == "position":
             cells = _position_cells(item)
             tds = [f"<td class=num>{esc(cells[0])}</td>", f"<td>{esc(cells[1])}</td>",
-                   f"<td class=num>{esc(cells[2])}</td>"]
-            tds.append(f"<td class=money>{_fmt_qty(cells[3], '&nbsp;')}</td>")
-            tds += [f"<td class=money>{fmt(v)}</td>" for v in cells[4:12]]
-            tds.append(f"<td class=src>{esc(cells[12])}</td>")
+                   f"<td class=num>{esc(cells[2])}</td>",
+                   f"<td class=money>{_fmt_qty(cells[3], '&nbsp;')}</td>",
+                   f"<td class=money>{fmt(cells[4])}</td>",
+                   f"<td class=money><b>{fmt(cells[5])}</b></td>"]
             body.append("<tr>" + "".join(tds) + "</tr>")
         else:
             totals = item.get("totals", {})
-            money = ""
-            if kind in ("division_total", "estimate_total"):
-                money = "".join(f"<td class=money>{fmt(totals.get(k))}</td>"
-                                for k in ("labor", "material", "machines", "total"))
-            else:
-                money = "<td colspan=4></td>"
-            body.append(f"<tr class='band {kind}'><td colspan=8>{esc(item['title'])}</td>"
-                        f"{money}<td></td></tr>")
+            money = (f"<td class=money>{fmt(totals.get('total'))}</td>"
+                     if kind in ("division_total", "estimate_total") else "<td></td>")
+            body.append(f"<tr class='band {kind}'>"
+                        f"<td colspan={COL_TOTAL - 1}>{esc(item['title'])}</td>{money}</tr>")
 
     summary = "".join(
         f"<tr class='{'sub' if line.get('sub') else ''} {'grand' if line['key'] == 'total' else ''}'>"

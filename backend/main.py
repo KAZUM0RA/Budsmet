@@ -16,7 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config, db
-from .services import catalog, estimates, exporter, importer, pricing, web_prices
+from .services import (catalog, estimates, exporter, importer, price_sites,
+                       pricing, web_prices)
 from .services.normalize import clean_text
 
 @asynccontextmanager
@@ -109,7 +110,15 @@ def meta() -> dict:
     regions = catalog.regions()
     return {
         "defaults": config.DEFAULTS,
+        "price_site": {
+            "url": config.PRICE_SITE,
+            "count": len(price_sites.stored()),
+            "age_days": price_sites.age_days(),
+            "refresh_days": config.SITE_REFRESH_DAYS,
+        },
         "strategies": [
+            {"key": "site_first",
+             "label": "Прайс сайту (після власної історії) — без ключів і лімітів"},
             {"key": "web_fallback",
              "label": "Історія, довідник, а інтернет — лише для невідомих робіт (ощадно)"},
             {"key": "history_first", "label": "Спершу історія, потім інтернет, потім довідник"},
@@ -162,6 +171,34 @@ def catalog_upsert(payload: CatalogIn) -> dict:
 def catalog_delete(code: str) -> dict:
     catalog.delete_override(code)
     return {"deleted": code}
+
+
+@app.get("/api/price-site")
+def price_site_status(limit: int = Query(50, ge=1, le=1000), q: str = "") -> dict:
+    """Що саме завантажено з прайса сайту."""
+    rows = price_sites.stored()
+    if q.strip():
+        needle = q.strip().lower()
+        rows = [r for r in rows if needle in r["name"].lower()
+                or needle in (r["category"] or "").lower()]
+    return {
+        "url": config.PRICE_SITE,
+        "count": len(price_sites.stored()),
+        "matched": len(rows),
+        "age_days": price_sites.age_days(),
+        "refresh_days": config.SITE_REFRESH_DAYS,
+        "categories": sorted({r["category"] for r in price_sites.stored() if r["category"]}),
+        "items": rows[:limit],
+    }
+
+
+@app.post("/api/price-site/refresh")
+def price_site_refresh(force: bool = True) -> dict:
+    """Перечитує прайс із сайту. Повертає кількість позицій або текст помилки."""
+    result = price_sites.refresh(force=force)
+    result["count"] = len(price_sites.stored())
+    result["age_days"] = price_sites.age_days()
+    return result
 
 
 @app.get("/api/price")
