@@ -3,6 +3,21 @@
 #   sudo /opt/budsmet/app/deploy/vm/update.sh
 set -euo pipefail
 
+# Скрипт лежить у репозиторії, який сам і оновлює: git підмінив би цей файл
+# просто під час виконання, а bash дочитує його з диска по ходу. Тому одразу
+# продовжуємо роботу з копії у тимчасовому каталозі.
+if [[ "${BUDSMET_REEXEC:-}" != "1" ]]; then
+    _self_copy="$(mktemp /tmp/budsmet-XXXXXX.sh)"
+    cp "$0" "$_self_copy"
+    chmod +x "$_self_copy"
+    BUDSMET_REEXEC=1 exec "$_self_copy" "$@"
+fi
+# Копія прибирає себе сама. Саме if, а не `&&`: при set -e хибна умова
+# в кінці рядка завершила б скрипт.
+if [[ "$0" == /tmp/budsmet-*.sh ]]; then
+    trap 'rm -f "$0"' EXIT
+fi
+
 APP_NAME="budsmet"
 APP_DIR="/opt/${APP_NAME}/app"
 VENV_DIR="/opt/${APP_NAME}/venv"
@@ -24,6 +39,22 @@ chown -R "$APP_NAME:$APP_NAME" "$APP_DIR"
 echo "==> Оновлення залежностей"
 "${VENV_DIR}/bin/pip" install --quiet --upgrade -r "${APP_DIR}/requirements.txt"
 chown -R "$APP_NAME:$APP_NAME" "$VENV_DIR"
+
+echo "==> Оновлення конфігурації служби та резервного копіювання"
+# Розташування скриптів між версіями могло змінитись — перезаписуємо шляхи,
+# інакше systemd або cron указували б на файли, яких уже немає.
+sed -e "s|__USER__|${APP_NAME}|g" \
+    -e "s|__APP_DIR__|${APP_DIR}|g" \
+    -e "s|__VENV_DIR__|${VENV_DIR}|g" \
+    -e "s|__DATA_DIR__|${DATA_DIR}|g" \
+    -e "s|__PORT__|8000|g" \
+    "${APP_DIR}/deploy/vm/budsmet.service" > "/etc/systemd/system/${APP_NAME}.service"
+cat > "/etc/cron.d/${APP_NAME}-backup" <<CRON
+# Щоденна резервна копія бази кошторисів о 03:30. Зберігається 14 останніх копій.
+30 3 * * * root ${APP_DIR}/deploy/vm/backup.sh >/dev/null 2>&1
+CRON
+chmod 644 "/etc/cron.d/${APP_NAME}-backup"
+systemctl daemon-reload
 
 echo "==> Перезапуск служби"
 systemctl restart "$APP_NAME"

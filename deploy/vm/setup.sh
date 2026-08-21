@@ -10,6 +10,21 @@
 #
 set -euo pipefail
 
+# Скрипт лежить у репозиторії, який сам і оновлює: git підмінив би цей файл
+# просто під час виконання, а bash дочитує його з диска по ходу. Тому одразу
+# продовжуємо роботу з копії у тимчасовому каталозі.
+if [[ "${BUDSMET_REEXEC:-}" != "1" ]]; then
+    _self_copy="$(mktemp /tmp/budsmet-XXXXXX.sh)"
+    cp "$0" "$_self_copy"
+    chmod +x "$_self_copy"
+    BUDSMET_REEXEC=1 exec "$_self_copy" "$@"
+fi
+# Копія прибирає себе сама. Саме if, а не `&&`: при set -e хибна умова
+# в кінці рядка завершила б скрипт.
+if [[ "$0" == /tmp/budsmet-*.sh ]]; then
+    trap 'rm -f "$0"' EXIT
+fi
+
 APP_NAME="budsmet"
 REPO_URL="https://github.com/KAZUM0RA/Budsmet.git"
 BRANCH="claude/web-app-cost-estimates-l1x9ef"
