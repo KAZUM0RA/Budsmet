@@ -170,3 +170,28 @@ def test_cooldown_expires(clean_db, monkeypatch):
     price_sites.lookup("Робота", "м2")
     price_sites.lookup("Робота", "м2")
     assert attempts["n"] == 2
+
+
+def test_div_layout_is_parsed():
+    """Сучасна верстка на div/span розбирається так само, як таблиця."""
+    by_name = {p.name: p for p in parse_file("price_divs.html")}
+    assert by_name["Шпаклювання стін під фарбування"].price == 180.0
+    assert by_name["Шпаклювання стін під фарбування"].unit == "м2"
+    assert by_name["Укладання плитки на підлогу"].unit == "м2"      # «кв.м»
+    assert by_name["Затирка швів"].price == 35.0
+    assert by_name["Фарбування стін за 2 рази"].category == "Малярні роботи"
+
+
+def test_container_rows_do_not_become_positions():
+    """Батьківський блок містить кілька робіт — це не окрема позиція."""
+    for fixture in ("price_divs.html", "price_inline.html", "price_table.html"):
+        for price in parse_file(fixture):
+            assert "грн" not in price.name.lower(), f"склейка рядків: {price.name}"
+            assert len(price.name) <= 120
+
+
+def test_number_inside_name_is_not_taken_as_price():
+    """«за 2 рази» чи «до 20 м2» у назві не мають ставати ціною."""
+    prices = {p.name: p.price for p in parse_file("price_divs.html")}
+    assert prices["Фарбування стін за 2 рази"] == 120.0
+    assert all(value >= 5 for value in prices.values())

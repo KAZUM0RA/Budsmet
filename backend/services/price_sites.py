@@ -56,94 +56,121 @@ class SitePrice:
 
 
 class _RowExtractor(HTMLParser):
-    """Збирає рядки таблиць/списків як набори текстових комірок.
+    """Збирає рядки прайса як набори текстових комірок.
 
-    Також запам'ятовує посилання, схожі на розділи прайса, і поточний
-    заголовок — він стає категорією для позицій під ним.
+    Не спирається на конкретні теги: рядком вважається будь-який блок, що
+    містить кілька коротких текстових шматків. Так однаково розбираються і
+    класична таблиця, і список, і сучасна верстка на `div` зі `span`.
     """
 
-    _CELL_TAGS = {"td", "th"}
-    _ROW_TAGS = {"tr", "li"}
-    _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5"}
-    _SKIP_TAGS = {"script", "style", "noscript"}
+    # Блоки, що можуть бути рядком прайса.
+    _BLOCK_TAGS = {"tr", "li", "div", "p", "section", "article", "td", "th", "dd", "dl"}
+    _HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+    _SKIP_TAGS = {"script", "style", "noscript", "svg", "head"}
+    # Реальний рядок прайса має кілька комірок, а не десятки: більше —
+    # це контейнер, у якому лежать самі рядки.
+    _MAX_CELLS = 8
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.rows: list[tuple[list[str], str]] = []   # (комірки, категорія)
+        self.rows: list[tuple[list[str], str]] = []
         self.links: list[str] = []
-        self._cells: list[str] = []
+        self.text_lines: list[str] = []
+        self._stack: list[list[str]] = []      # комірки кожного відкритого блоку
         self._buffer: list[str] = []
-        self._in_row = False
-        self._in_cell = False
-        self._in_heading = False
         self._heading: list[str] = []
+        self._in_heading = False
         self._category = ""
         self._skip_depth = 0
+
+    # --- службове ---------------------------------------------------------
+    def _flush_cell(self) -> str:
+        text = clean_text(" ".join(self._buffer))
+        self._buffer = []
+        if text and self._stack:
+            self._stack[-1].append(text)
+        return text
 
     def handle_starttag(self, tag, attrs):
         if tag in self._SKIP_TAGS:
             self._skip_depth += 1
             return
+        if self._skip_depth:
+            return
         if tag == "a":
             href = dict(attrs).get("href")
             if href:
                 self.links.append(href)
-        if tag in self._ROW_TAGS:
-            self._flush_row()
-            self._in_row = True
-            self._cells = []
-            self._buffer = []
-        elif tag in self._CELL_TAGS:
+        if tag == "br":
+            self._buffer.append(" ")
+            return
+        if tag in self._HEADING_TAGS:
             self._flush_cell()
-            self._in_cell = True
-        elif tag in self._HEADING_TAGS:
             self._in_heading = True
             self._heading = []
-        elif tag == "br":
-            self._buffer.append(" ")
+            return
+        if tag in self._BLOCK_TAGS:
+            # Текст, накопичений до вкладеного блоку, стає окремою коміркою.
+            self._flush_cell()
+            self._stack.append([])
 
     def handle_endtag(self, tag):
         if tag in self._SKIP_TAGS:
             self._skip_depth = max(0, self._skip_depth - 1)
             return
-        if tag in self._CELL_TAGS:
-            self._flush_cell()
-            self._in_cell = False
-        elif tag in self._ROW_TAGS:
-            self._flush_row()
-            self._in_row = False
-        elif tag in self._HEADING_TAGS:
+        if self._skip_depth:
+            return
+        if tag in self._HEADING_TAGS:
             heading = clean_text(" ".join(self._heading))
             if heading:
                 self._category = heading
+                self.text_lines.append(heading)
             self._in_heading = False
             self._heading = []
+            self._buffer = []
+            return
+
+        if tag in self._BLOCK_TAGS:
+            self._flush_cell()
+            cells = self._stack.pop() if self._stack else []
+            if cells:
+                joined = clean_text(" ".join(cells))
+                if joined:
+                    self.text_lines.append(joined)
+                if 1 <= len(cells) <= self._MAX_CELLS:
+                    self.rows.append((cells, self._category))
+                # Для батьківського блоку вкладений стає однією коміркою.
+                if self._stack:
+                    self._stack[-1].append(joined)
+        else:
+            # Закриття будь-якого тега (span, b, a…) розділяє комірки.
+            self._flush_cell()
 
     def handle_data(self, data):
         if self._skip_depth:
             return
         if self._in_heading:
             self._heading.append(data)
-        if self._in_row:
+        else:
             self._buffer.append(data)
 
-    def _flush_cell(self) -> None:
-        text = clean_text(" ".join(self._buffer))
-        self._buffer = []
-        if text:
-            self._cells.append(text)
-
-    def _flush_row(self) -> None:
+    def close(self):
+        super().close()
         self._flush_cell()
-        if self._cells:
-            self.rows.append((self._cells, self._category))
-        self._cells = []
+        while self._stack:
+            cells = self._stack.pop()
+            if 1 <= len(cells) <= self._MAX_CELLS:
+                self.rows.append((cells, self._category))
+
+
+# Комірка з ціною коротка: «180 грн», «від 1 250 грн», «150-200 грн/м2».
+_MAX_PRICE_CELL_LEN = 26
 
 
 def _price_from(text: str) -> float | None:
     """Ціна з комірки; для діапазону «150-200» береться середина."""
     text = clean_text(text)
-    if not _HAS_DIGIT_RE.search(text):
+    if not _HAS_DIGIT_RE.search(text) or len(text) > _MAX_PRICE_CELL_LEN:
         return None
     match = _PRICE_RE.search(text)
     if match is None:
@@ -204,14 +231,21 @@ def parse_rows(rows: list[tuple[list[str], str]], url: str = "") -> list[SitePri
     return found
 
 
+# Назва роботи не містить ціни всередині. Якщо містить — це склейка кількох
+# рядків, яку дав батьківський контейнер, а не окрема позиція.
+_AGGREGATED_RE = re.compile(r"(грн|₴)", re.I)
+_MAX_NAME_LEN = 120
+
 _NOISE_RE = re.compile(
     r"^(ціна|вартість|назва|найменування|послуга|роботи|од\.?|одиниц|разом|"
     r"всього|телефон|адреса|copyright|©|меню|головна)\b", re.I)
 
 
 def _looks_like_noise(name: str) -> bool:
-    """Відсіює заголовки таблиці та навігацію, що потрапляють у рядки."""
+    """Відсіює заголовки таблиці, навігацію та склейки кількох рядків."""
     if _NOISE_RE.match(name.strip()):
+        return True
+    if len(name) > _MAX_NAME_LEN or _AGGREGATED_RE.search(name):
         return True
     letters = sum(ch.isalpha() for ch in name)
     return letters < 5

@@ -710,6 +710,8 @@ function catalogModal(item = {}) {
 /* --------------------------------------------------------------- прайс сайту */
 
 async function loadSitePrices() {
+  const previousError = $('#site-error');
+  if (previousError) previousError.remove();
   const q = $('#site-search').value.trim();
   const data = await api(`/api/price-site?q=${encodeURIComponent(q)}&limit=300`);
   const age = data.age_days;
@@ -744,13 +746,22 @@ async function refreshSitePrices() {
   button.innerHTML = '<span class="spinner"></span>Завантажую…';
   try {
     const result = await api('/api/price-site/refresh', { method: 'POST' });
+    await loadSitePrices();
+    await loadMeta();
     if (result.error) {
-      toast(`Не вдалося: ${result.error}`, 'err');
+      toast('Не вдалося завантажити прайс', 'err');
+      $('#site-status').insertAdjacentHTML('afterend', `
+        <div class="warn" id="site-error">
+          <b>Не вдалося: ${esc(result.error)}</b><br>
+          Сторінка відкрилась, але розбірник не побачив у ній рядків
+          «робота — одиниця — ціна». Щоб з'ясувати причину, виконайте на сервері:
+          <code>cd /opt/budsmet/app &amp;&amp; sudo -u budsmet /opt/budsmet/venv/bin/python
+          tools/check_price_site.py</code> — вивід покаже, чи є ціни в самому HTML,
+          чи їх підвантажує скрипт уже в браузері.
+        </div>`);
     } else {
       toast(`Завантажено ${result.saved} позицій зі ${result.pages || 1} сторінок`, 'ok');
     }
-    await loadSitePrices();
-    await loadMeta();
   } catch (err) { toast(err.message, 'err'); } finally {
     button.disabled = false;
     button.textContent = original;
