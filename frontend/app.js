@@ -140,6 +140,8 @@ function renderObject() {
   $('#exp-pdf').href = `${base}/pdf`;
   $('#exp-html').href = `${base}/html`;
 
+  $('#match-review').classList.add('hidden');
+  $('#reprice-stats').textContent = '';
   renderDivisionSelect();
   renderTree();
   renderTotals();
@@ -394,6 +396,110 @@ async function repriceObject() {
     button.disabled = false;
     button.textContent = original;
   }
+}
+
+/* --------------------------------------------------- підбір цін із довідника */
+
+async function matchFromCatalog() {
+  const button = $('#btn-match-catalog');
+  const original = button.textContent;
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span>Підбираю…';
+  try {
+    const result = await api(`/api/objects/${state.currentId}/match-catalog`,
+      json('POST', { keep_manual: true }));
+    state.calc = result.calc;
+    renderTree();
+    renderTotals();
+    renderMatchReview(result.stats, result.review);
+    loadObjects();
+    const s = result.stats;
+    toast(`Підібрано ${s.applied} з ${s.total}${s.review ? `, перевірте ${s.review}` : ''}`,
+      s.not_found ? '' : 'ok');
+  } catch (err) { toast(err.message, 'err'); } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function renderMatchReview(stats, review) {
+  const panel = $('#match-review');
+  if (!review.length) {
+    panel.classList.add('hidden');
+    $('#reprice-stats').textContent =
+      `Підібрано всі ${stats.applied} позицій · коефіцієнт ${stats.region_label} ×${stats.region_factor}`;
+    return;
+  }
+
+  $('#review-note').innerHTML = `
+    <div class="match-stats">
+      <span><b>${stats.confident}</b> підібрано впевнено</span>
+      <span><b>${stats.review}</b> потребують перевірки</span>
+      <span><b>${stats.not_found}</b> без ціни</span>
+      ${stats.skipped_manual ? `<span><b>${stats.skipped_manual}</b> задано вручну</span>` : ''}
+    </div>
+    Оберіть відповідну розцінку зі списку — ціна підставиться одразу.
+    Коефіцієнт ${esc(stats.region_label)} ×${stats.region_factor}.`;
+
+  $('#review-list').innerHTML = review.map((r) => {
+    const options = r.candidates.map((c) => `
+      <option value="${esc(c.code)}" ${c.code === r.applied_code ? 'selected' : ''}>
+        ${esc(c.name)} · ${esc(c.unit)} · ${money(c.labor + c.material)} грн (${c.score}%)
+      </option>`).join('');
+    const badge = r.applied_code
+      ? `<span class="badge-low">збіг ${r.score}%</span>`
+      : '<span class="badge-none">ціну не підібрано</span>';
+    return `<div class="review-item" data-pos="${r.position_id}">
+      <div>
+        <div class="rname">${r.number}. ${esc(r.name)}${badge}</div>
+        <div class="rmeta">${qty(r.quantity)} ${esc(r.unit)}</div>
+      </div>
+      <div>
+        <select class="pick">${options || '<option value="">немає схожих розцінок</option>'}</select>
+        <input class="rsearch" type="search" placeholder="не те? знайдіть у довіднику…">
+      </div>
+      <button class="ghost apply">Застосувати</button>
+    </div>`;
+  }).join('');
+
+  $$('#review-list .review-item').forEach((row) => {
+    const id = Number(row.dataset.pos);
+
+    // Якщо жоден із запропонованих варіантів не підходить — шукаємо самі.
+    let searchTimer;
+    $('.rsearch', row).oninput = (e) => {
+      clearTimeout(searchTimer);
+      const q = e.target.value.trim();
+      searchTimer = setTimeout(async () => {
+        if (q.length < 2) return;
+        try {
+          const { items } = await api(`/api/catalog?q=${encodeURIComponent(q)}&limit=15`);
+          $('.pick', row).innerHTML = items.length
+            ? items.map((c) => `<option value="${esc(c.code)}">
+                ${esc(c.name)} · ${esc(c.unit)} · ${money(c.labor + c.material)} грн
+              </option>`).join('')
+            : '<option value="">нічого не знайдено</option>';
+        } catch (_) { /* мовчки лишаємо попередній список */ }
+      }, 250);
+    };
+    $('.apply', row).onclick = async () => {
+      const code = $('.pick', row).value;
+      if (!code) { toast('Оберіть розцінку зі списку', 'err'); return; }
+      try {
+        await api(`/api/positions/${id}/apply-catalog`, json('POST', { code }));
+        row.remove();
+        await refreshCalc();
+        loadObjects();
+        if (!$$('#review-list .review-item').length) {
+          panel.classList.add('hidden');
+          toast('Усі позиції оцінено', 'ok');
+        }
+      } catch (err) { toast(err.message, 'err'); }
+    };
+  });
+
+  panel.classList.remove('hidden');
+  $('#reprice-stats').textContent = '';
 }
 
 /* ------------------------------------------------------------------- імпорт */
@@ -715,6 +821,8 @@ function init() {
   $('#btn-cat-new').onclick = () => catalogModal();
   $('#btn-add-position').onclick = addPosition;
   $('#btn-reprice').onclick = repriceObject;
+  $('#btn-match-catalog').onclick = matchFromCatalog;
+  $('#btn-review-close').onclick = () => $('#match-review').classList.add('hidden');
   $('#add-qty').onkeydown = (e) => { if (e.key === 'Enter') addPosition(); };
 
   ['#obj-address', '#obj-city', '#obj-region', '#obj-customer', '#obj-doccode',

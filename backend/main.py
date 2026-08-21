@@ -302,6 +302,43 @@ def object_reprice(object_id: int, payload: RepriceIn) -> dict:
     return {"stats": stats, "calc": estimates.calculate_object(object_id)}
 
 
+class MatchCatalogIn(BaseModel):
+    keep_manual: bool = True
+    min_score: float | None = None
+
+
+class ApplyCatalogIn(BaseModel):
+    code: str
+
+
+@app.post("/api/objects/{object_id}/match-catalog")
+def object_match_catalog(object_id: int, payload: MatchCatalogIn) -> dict:
+    """Підбирає ціни всіх позицій із довідника за схожістю найменувань."""
+    try:
+        result = estimates.match_from_catalog(object_id, payload.keep_manual,
+                                              payload.min_score)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    result["calc"] = estimates.calculate_object(object_id)
+    return result
+
+
+@app.get("/api/positions/{position_id}/candidates")
+def position_candidates(position_id: int, limit: int = Query(6, ge=1, le=25)) -> dict:
+    try:
+        return {"items": estimates.position_candidates(position_id, limit)}
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/api/positions/{position_id}/apply-catalog")
+def position_apply_catalog(position_id: int, payload: ApplyCatalogIn) -> dict:
+    try:
+        return estimates.apply_catalog_item(position_id, payload.code)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 @app.post("/api/objects/{object_id}/history")
 def object_to_history(object_id: int) -> dict:
     try:

@@ -64,7 +64,11 @@
             </div>
           </div>
           <div class="obj-actions">
-            <button id="btn-reprice" class="primary">Перерахувати ціни</button>
+            <button id="btn-match-catalog" class="primary"
+                    title="Підібрати ціни всіх позицій із довідника за схожістю найменувань">
+              Підібрати ціни з довідника</button>
+            <button id="btn-reprice" class="ghost"
+                    title="Перерахувати за обраним джерелом цін">Перерахувати</button>
             <div class="dropdown">
               <button class="ghost">Вивантажити ▾</button>
               <div class="dropdown-menu">
@@ -101,6 +105,17 @@
           <input id="add-qty" type="number" step="0.0001" placeholder="обсяг" class="w-qty">
           <select id="add-division" class="w-div"></select>
           <button id="btn-add-position" class="primary">Додати</button>
+        </div>
+
+        <div id="match-review" class="hidden">
+          <div class="review-head">
+            <div>
+              <h2>Перевірте підбір</h2>
+              <div id="review-note" class="muted"></div>
+            </div>
+            <button id="btn-review-close" class="ghost">Згорнути</button>
+          </div>
+          <div id="review-list"></div>
         </div>
 
         <div id="estimate-tree" class="tree"></div>

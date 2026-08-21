@@ -263,6 +263,129 @@ def reprice_object(object_id: int, strategy: str | None = None, keep_manual: boo
     return stats
 
 
+# Межа, вище якої підібраній розцінці можна довіряти без перегляду.
+CONFIDENT_SCORE = 80.0
+
+
+def match_from_catalog(object_id: int, keep_manual: bool = True,
+                       min_score: float | None = None) -> dict:
+    """Підбирає ціни всіх позицій із довідника за схожістю найменувань.
+
+    Повертає статистику і перелік позицій, які варто переглянути: для них
+    додаються найкращі варіанти з довідника, щоб можна було обрати вручну.
+    """
+    obj = get_object(object_id)
+    if obj is None:
+        raise LookupError("Об'єкт не знайдено")
+    matcher = catalog.matcher()
+    factor, region_label = catalog.region_factor(obj["city"], obj["region"])
+    threshold = catalog.matcher().MIN_SCORE if min_score is None else float(min_score)
+
+    stats = {"total": 0, "applied": 0, "confident": 0, "review": 0,
+             "not_found": 0, "skipped_manual": 0,
+             "region_factor": factor, "region_label": region_label}
+    review: list[dict] = []
+
+    for estimate in build_tree(object_id):
+        for division in estimate["divisions"]:
+            for position in division["positions"]:
+                stats["total"] += 1
+                if keep_manual and position["manual"]:
+                    stats["skipped_manual"] += 1
+                    continue
+
+                best = matcher.best(position["name"], position["unit"])
+                if best is not None and best.score >= threshold:
+                    item = best.item
+                    db.execute(
+                        """UPDATE positions SET labor_price=?, material_price=?,
+                               machines_price=?, price_source='catalog',
+                               match_code=?, match_score=?, manual=0
+                           WHERE id = ?""",
+                        (round(float(item.get("labor", 0)) * factor, 2),
+                         round(float(item.get("material", 0)) * factor, 2),
+                         round(float(item.get("machines", 0)) * factor, 2),
+                         item["code"], best.score, position["id"]))
+                    stats["applied"] += 1
+                    if best.score >= CONFIDENT_SCORE:
+                        stats["confident"] += 1
+                        continue
+                    stats["review"] += 1
+                else:
+                    stats["not_found"] += 1
+
+                # Сумнівні та непідібрані — на перегляд, з варіантами на вибір.
+                review.append({
+                    "position_id": position["id"],
+                    "number": position["number"],
+                    "name": position["name"],
+                    "unit": position["unit"],
+                    "quantity": position["quantity"],
+                    "applied_code": best.code if (best and best.score >= threshold) else "",
+                    "score": best.score if best else 0.0,
+                    "candidates": [
+                        {"code": c.code, "name": c.name, "unit": c.unit,
+                         "score": c.score,
+                         "labor": round(float(c.item.get("labor", 0)) * factor, 2),
+                         "material": round(float(c.item.get("material", 0)) * factor, 2),
+                         "machines": round(float(c.item.get("machines", 0)) * factor, 2)}
+                        for c in matcher.candidates(position["name"], position["unit"], limit=6)
+                    ],
+                })
+
+    db.execute("UPDATE objects SET updated_at = datetime('now') WHERE id = ?", (object_id,))
+    return {"stats": stats, "review": review}
+
+
+def apply_catalog_item(position_id: int, code: str) -> dict:
+    """Ставить позиції ціну з обраної розцінки довідника."""
+    row = db.query_one(
+        """SELECT p.*, o.city AS city, o.region AS region
+             FROM positions p
+             JOIN divisions d ON d.id = p.division_id
+             JOIN estimates e ON e.id = d.estimate_id
+             JOIN objects o ON o.id = e.object_id
+            WHERE p.id = ?""", (position_id,))
+    if row is None:
+        raise LookupError("Позицію не знайдено")
+    item = catalog.by_code(code)
+    if item is None:
+        raise LookupError("Розцінку не знайдено в довіднику")
+
+    factor, _label = catalog.region_factor(row["city"], row["region"])
+    db.execute(
+        """UPDATE positions SET labor_price=?, material_price=?, machines_price=?,
+               unit = CASE WHEN unit = '' THEN ? ELSE unit END,
+               price_source='catalog', match_code=?, match_score=100.0, manual=0
+           WHERE id = ?""",
+        (round(float(item.get("labor", 0)) * factor, 2),
+         round(float(item.get("material", 0)) * factor, 2),
+         round(float(item.get("machines", 0)) * factor, 2),
+         item.get("unit", ""), code, position_id))
+    return dict(db.query_one("SELECT * FROM positions WHERE id = ?", (position_id,)))
+
+
+def position_candidates(position_id: int, limit: int = 6) -> list[dict]:
+    """Варіанти розцінок для однієї позиції — для ручного вибору."""
+    row = db.query_one(
+        """SELECT p.name, p.unit, o.city AS city, o.region AS region
+             FROM positions p
+             JOIN divisions d ON d.id = p.division_id
+             JOIN estimates e ON e.id = d.estimate_id
+             JOIN objects o ON o.id = e.object_id
+            WHERE p.id = ?""", (position_id,))
+    if row is None:
+        raise LookupError("Позицію не знайдено")
+    factor, _label = catalog.region_factor(row["city"], row["region"])
+    return [
+        {"code": c.code, "name": c.name, "unit": c.unit, "score": c.score,
+         "labor": round(float(c.item.get("labor", 0)) * factor, 2),
+         "material": round(float(c.item.get("material", 0)) * factor, 2),
+         "machines": round(float(c.item.get("machines", 0)) * factor, 2)}
+        for c in catalog.matcher().candidates(row["name"], row["unit"], limit=limit)
+    ]
+
+
 def save_to_history(object_id: int) -> dict:
     """Фіксує ціни кошторису в історії, щоб наступні об'єкти могли їх використати."""
     obj = get_object(object_id)
