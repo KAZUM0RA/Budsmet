@@ -39,6 +39,8 @@ LOGIN=""
 PASSWORD=""
 EMAIL=""
 SKIP_TLS="no"
+AUTO_UPDATE="yes"
+AUTO_UPDATE_INTERVAL="10min"
 
 log()  { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
@@ -55,6 +57,8 @@ usage() {
   --port   <порт>     внутрішній порт застосунку (типово: 8000)
   --branch <гілка>    гілка репозиторію (типово: ${BRANCH})
   --skip-tls          не отримувати сертифікат навіть за наявності домену
+  --no-auto-update    не вмикати автоматичне оновлення з репозиторію
+  --update-every <час>  як часто перевіряти оновлення (типово: 10min)
 USAGE
 }
 
@@ -67,6 +71,8 @@ while [[ $# -gt 0 ]]; do
         --port)     PORT="${2:-}"; shift 2 ;;
         --branch)   BRANCH="${2:-}"; shift 2 ;;
         --skip-tls) SKIP_TLS="yes"; shift ;;
+        --no-auto-update) AUTO_UPDATE="no"; shift ;;
+        --update-every) AUTO_UPDATE_INTERVAL="${2:-}"; shift 2 ;;
         -h|--help)  usage; exit 0 ;;
         *)          die "Невідома опція: $1 (--help для довідки)" ;;
     esac
@@ -205,6 +211,24 @@ else
     warn "Не вдалось налаштувати фаєрвол — відкрийте порти 80 і 443 вручну."
 fi
 
+# ---------------------------------------------------- автоматичне оновлення
+if [[ "$AUTO_UPDATE" == "yes" ]]; then
+    log "Автоматичне оновлення кожні ${AUTO_UPDATE_INTERVAL}"
+    sed -e "s|__APP_DIR__|${APP_DIR}|g" \
+        "${APP_DIR}/deploy/vm/budsmet-autoupdate.service" \
+        > "/etc/systemd/system/${APP_NAME}-autoupdate.service"
+    sed -e "s|__INTERVAL__|${AUTO_UPDATE_INTERVAL}|g" \
+        "${APP_DIR}/deploy/vm/budsmet-autoupdate.timer" \
+        > "/etc/systemd/system/${APP_NAME}-autoupdate.timer"
+    systemctl daemon-reload
+    systemctl enable --now "${APP_NAME}-autoupdate.timer"
+else
+    systemctl disable --now "${APP_NAME}-autoupdate.timer" 2>/dev/null || true
+    rm -f "/etc/systemd/system/${APP_NAME}-autoupdate.service" \
+          "/etc/systemd/system/${APP_NAME}-autoupdate.timer"
+    systemctl daemon-reload
+fi
+
 # ------------------------------------------------- щоденна резервна копія
 log "Налаштування щоденної резервної копії"
 cat > /etc/cron.d/${APP_NAME}-backup <<CRON
@@ -230,6 +254,11 @@ if [[ -n "$DOMAIN" && "$SKIP_TLS" == "no" ]]; then
 fi
 
 # -------------------------------------------------------------- підсумок
+if [[ "$AUTO_UPDATE" == "yes" ]]; then
+    AUTO_UPDATE_STATUS="увімкнено, перевірка кожні ${AUTO_UPDATE_INTERVAL}"
+else
+    AUTO_UPDATE_STATUS="вимкнено"
+fi
 IP="$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
 URL="http://${DOMAIN:-$IP}"
 [[ -n "$DOMAIN" && "$SKIP_TLS" == "no" ]] && URL="https://${DOMAIN}"
@@ -255,6 +284,7 @@ cat <<SUMMARY
   Журнал        journalctl -u ${APP_NAME} -f
   Перезапуск    sudo systemctl restart ${APP_NAME}
   Оновлення     sudo ${APP_DIR}/deploy/vm/update.sh
+  Автооновлення ${AUTO_UPDATE_STATUS}
   Резервна копія sudo ${APP_DIR}/deploy/vm/backup.sh
 ────────────────────────────────────────────────────────────────
 SUMMARY

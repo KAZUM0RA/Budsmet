@@ -1,0 +1,11 @@
+# Разова перевірка оновлень. Запускається таймером budsmet-autoupdate.timer.
+[Unit]
+Description=Budsmet — перевірка та встановлення оновлень
+After=network-online.target budsmet.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=__APP_DIR__/deploy/vm/autoupdate.sh
+# Оновлення не має тривати вічно, якщо мережа підвисла.
+TimeoutStartSec=900

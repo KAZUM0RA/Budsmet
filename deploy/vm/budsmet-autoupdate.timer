@@ -1,0 +1,13 @@
+# Як часто перевіряти, чи з'явилась нова версія.
+[Unit]
+Description=Budsmet — регулярна перевірка оновлень
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=__INTERVAL__
+# Невеликий розкид, щоб не смикати GitHub рівно в одну й ту саму секунду.
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target
