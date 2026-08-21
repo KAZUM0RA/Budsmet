@@ -17,12 +17,13 @@ if [[ "${BUDSMET_REEXEC:-}" != "1" ]]; then
     _self_copy="$(mktemp /tmp/budsmet-XXXXXX.sh)"
     cp "$0" "$_self_copy"
     chmod +x "$_self_copy"
-    BUDSMET_REEXEC=1 exec "$_self_copy" "$@"
+    BUDSMET_REEXEC=1 BUDSMET_SELF_COPY="$_self_copy" exec "$_self_copy" "$@"
 fi
-# Копія прибирає себе сама. Саме if, а не `&&`: при set -e хибна умова
+# Копія прибирає себе сама. Порівнюємо точний шлях, а не шаблон імені, щоб
+# не зачепити сторонній файл. Саме if, а не `&&`: при set -e хибна умова
 # в кінці рядка завершила б скрипт.
-if [[ "$0" == /tmp/budsmet-*.sh ]]; then
-    trap 'rm -f "$0"' EXIT
+if [[ -n "${BUDSMET_SELF_COPY:-}" && "$0" == "${BUDSMET_SELF_COPY}" ]]; then
+    trap 'rm -f "${BUDSMET_SELF_COPY}"' EXIT
 fi
 
 APP_NAME="budsmet"
