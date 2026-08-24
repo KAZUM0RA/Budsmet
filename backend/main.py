@@ -339,6 +339,33 @@ def position_apply_catalog(position_id: int, payload: ApplyCatalogIn) -> dict:
         raise HTTPException(404, str(exc)) from exc
 
 
+class ToCatalogIn(BaseModel):
+    mode: str = "auto"          # auto | update | new
+    category: str = ""
+
+
+@app.post("/api/positions/{position_id}/to-catalog")
+def position_to_catalog(position_id: int, payload: ToCatalogIn) -> dict:
+    """Записує ціну однієї позиції в довідник розцінок."""
+    try:
+        return estimates.save_position_to_catalog(position_id, payload.mode,
+                                                  payload.category)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/api/objects/{object_id}/manual-to-catalog")
+def object_manual_to_catalog(object_id: int, payload: ToCatalogIn) -> dict:
+    """Записує в довідник усі ціни об'єкта, змінені вручну."""
+    try:
+        stats = estimates.save_manual_prices_to_catalog(object_id, payload.category)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"stats": stats, "calc": estimates.calculate_object(object_id)}
+
+
 @app.post("/api/objects/{object_id}/history")
 def object_to_history(object_id: int) -> dict:
     try:

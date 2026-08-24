@@ -386,6 +386,127 @@ def position_candidates(position_id: int, limit: int = 6) -> list[dict]:
     ]
 
 
+def _position_with_object(position_id: int):
+    return db.query_one(
+        """SELECT p.*, o.id AS object_id, o.city AS city, o.region AS region
+             FROM positions p
+             JOIN divisions d ON d.id = p.division_id
+             JOIN estimates e ON e.id = d.estimate_id
+             JOIN objects o ON o.id = e.object_id
+            WHERE p.id = ?""", (position_id,))
+
+
+def save_position_to_catalog(position_id: int, mode: str = "auto",
+                             category: str = "") -> dict:
+    """Записує ціну позиції в довідник розцінок.
+
+    Ціни в довіднику базові, а в кошторисі вже помножені на регіональний
+    коефіцієнт міста. Тому назад записується ціна, поділена на цей коефіцієнт —
+    інакше з кожним записом розцінка зростала б на коефіцієнт.
+
+    mode: "auto" — оновити підібрану розцінку, а якщо її немає, створити нову;
+          "update" — лише оновити підібрану; "new" — завжди створити нову.
+    """
+    row = _position_with_object(position_id)
+    if row is None:
+        raise LookupError("Позицію не знайдено")
+    name = clean_text(row["name"])
+    if not name:
+        raise ValueError("У позиції немає найменування")
+
+    factor, region_label = catalog.region_factor(row["city"], row["region"])
+    factor = factor or 1.0
+
+    def base(value) -> float:
+        return round(float(value or 0) / factor, 2)
+
+    code = clean_text(row["match_code"] or "")
+    if mode == "new" or (mode == "auto" and not code):
+        code = ""
+    elif mode == "update" and not code:
+        raise ValueError("Для цієї позиції немає підібраної розцінки — створіть нову")
+
+    existing = catalog.by_code(code) if code else None
+    payload = {
+        "code": code,
+        "name": existing["name"] if existing else name,
+        "unit": (existing.get("unit") if existing else "") or row["unit"],
+        "category": clean_text(category) or (existing.get("category") if existing else "")
+                    or "Ручні розцінки",
+        "labor": base(row["labor_price"]),
+        "material": base(row["material_price"]),
+        "machines": base(row["machines_price"]),
+    }
+    item = catalog.upsert_override(payload)
+
+    # Позиція тепер спирається на розцінку довідника, а не на ручне значення.
+    db.execute(
+        "UPDATE positions SET match_code=?, match_score=100.0 WHERE id=?",
+        (item["code"], position_id))
+    return {
+        "item": item,
+        "created": existing is None,
+        "region_factor": factor,
+        "region_label": region_label,
+        "price_in_estimate": round(float(row["labor_price"] or 0)
+                                   + float(row["material_price"] or 0)
+                                   + float(row["machines_price"] or 0), 2),
+    }
+
+
+def _already_in_catalog(position: dict, obj: dict) -> bool:
+    """Чи збігається ціна позиції з тією, що вже записана в довіднику."""
+    code = clean_text(position.get("match_code") or "")
+    if not code:
+        return False
+    item = catalog.by_code(code)
+    if item is None:
+        return False
+    factor, _label = catalog.region_factor(obj["city"], obj["region"])
+    factor = factor or 1.0
+    pairs = (("labor", "labor_price"), ("material", "material_price"),
+             ("machines", "machines_price"))
+    return all(
+        abs(float(item.get(field, 0)) - round(float(position[column] or 0) / factor, 2)) < 0.01
+        for field, column in pairs)
+
+
+def save_manual_prices_to_catalog(object_id: int, category: str = "") -> dict:
+    """Записує в довідник усі ціни об'єкта, введені вручну."""
+    obj = get_object(object_id)
+    if obj is None:
+        raise LookupError("Об'єкт не знайдено")
+    stats = {"updated": 0, "created": 0, "unchanged": 0, "skipped": 0, "items": []}
+
+    for estimate in build_tree(object_id):
+        for division in estimate["divisions"]:
+            for position in division["positions"]:
+                if not position["manual"]:
+                    continue
+                if not (position["labor_price"] or position["material_price"]
+                        or position["machines_price"]):
+                    stats["skipped"] += 1
+                    continue
+                # Якщо в довіднику вже стоїть саме ця ціна, писати нічого.
+                if _already_in_catalog(position, obj):
+                    stats["unchanged"] += 1
+                    continue
+                result = save_position_to_catalog(position["id"], mode="auto",
+                                                  category=category)
+                stats["created" if result["created"] else "updated"] += 1
+                stats["items"].append({
+                    "position_id": position["id"],
+                    "name": position["name"],
+                    "code": result["item"]["code"],
+                    "labor": result["item"]["labor"],
+                    "material": result["item"]["material"],
+                    "created": result["created"],
+                })
+    stats["region_factor"], stats["region_label"] = catalog.region_factor(
+        obj["city"], obj["region"])
+    return stats
+
+
 def save_to_history(object_id: int) -> dict:
     """Фіксує ціни кошторису в історії, щоб наступні об'єкти могли їх використати."""
     obj = get_object(object_id)

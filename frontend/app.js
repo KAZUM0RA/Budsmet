@@ -212,7 +212,10 @@ function renderTree() {
           <td><input class="cellinput" data-field="machines_price" value="${money(p.machines_price)}"></td>
           <td class="money">${money(p.totals.unit_price)}</td>
           <td class="money"><b>${money(p.totals.total)}</b></td>
-          <td class="ctr"><span class="src ${SRC_CLASS[src]}">${SRC_LABEL[src]}</span></td>
+          <td class="ctr"><span class="src ${SRC_CLASS[src]}">${SRC_LABEL[src]}</span>${
+            src === 'manual'
+              ? '<button class="tocat" title="Записати цю ціну в довідник розцінок">⤴</button>'
+              : ''}</td>
           <td class="ctr"><button class="rowdel" title="Видалити позицію">×</button></td>
         </tr>`);
       });
@@ -243,6 +246,20 @@ function bindTreeEvents() {
         } catch (err) { toast(err.message, 'err'); }
       };
     });
+    const toCatalog = $('.tocat', tr);
+    if (toCatalog) {
+      toCatalog.onclick = async () => {
+        try {
+          const r = await api(`/api/positions/${id}/to-catalog`, json('POST', { mode: 'auto' }));
+          const base = money(r.item.labor + r.item.material + r.item.machines);
+          toast(`${r.created ? 'Додано в довідник' : 'Оновлено в довіднику'}: `
+            + `${base} грн базова (${money(r.price_in_estimate)} грн для ${r.region_label})`, 'ok');
+          await refreshCalc();
+          await loadMeta();
+        } catch (err) { toast(err.message, 'err'); }
+      };
+    }
+
     $('.rowdel', tr).onclick = async () => {
       try {
         await api(`/api/positions/${id}`, { method: 'DELETE' });
@@ -844,6 +861,35 @@ function init() {
   $('#set-materials').onchange = saveObjectFields;
   $('#obj-name').onblur = saveObjectFields;
   $('#obj-name').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } };
+
+  $('#btn-manual-to-catalog').onclick = async () => {
+    const button = $('#btn-manual-to-catalog');
+    const original = button.textContent;
+    button.disabled = true;
+    button.innerHTML = '<span class="spinner"></span>Записую…';
+    try {
+      const { stats, calc } = await api(`/api/objects/${state.currentId}/manual-to-catalog`,
+        json('POST', {}));
+      state.calc = calc;
+      renderTree();
+      renderTotals();
+      const total = stats.created + stats.updated;
+      const parts = [];
+      if (stats.created) parts.push(`нових ${stats.created}`);
+      if (stats.updated) parts.push(`оновлено ${stats.updated}`);
+      if (stats.unchanged) parts.push(`вже були в довіднику ${stats.unchanged}`);
+      toast(total
+        ? `У довідник записано ${total} (${parts.join(', ')})`
+          + ` · ціни переведено в базові: ÷${stats.region_factor} для ${stats.region_label}`
+        : (stats.unchanged
+          ? `Усі ${stats.unchanged} ручних цін вже є в довіднику`
+          : 'Немає цін, змінених вручну'), total ? 'ok' : '');
+      await loadMeta();
+    } catch (err) { toast(err.message, 'err'); } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  };
 
   $('#btn-to-history').onclick = async () => {
     try {
