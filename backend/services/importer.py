@@ -20,20 +20,32 @@ KNOWN_UNITS = {
     "вимірюв", "м.п", "мп", "%", "маш-год", "люд-год", "місце", "система",
     "пара", "секція", "прилад", "апарат", "пристрій", "вузол", "проба",
     "фазув-ня.", "од", "штук", "пог.м", "кв.м", "куб.м", "канал", "стояк",
+    "місць", "місце", "грати", "фазув-ня", "кінців", "вимірюв", "перевірка",
 }
 _KNOWN_UNITS_NORM = {normalize_unit(u) for u in KNOWN_UNITS}
 
 _ESTIMATE_RE = re.compile(r"^Локальн\w*\s+кошторис\b(?P<rest>.*)$", re.I)
-_DIVISION_RE = re.compile(r"^Розд[іi]л\b\s*(?P<num>\d+)?\s*[.:)]?\s*(?P<title>.*)$", re.I)
+# «Роздiл 1.», «Розділ №2.» — в актах номер пишуть зі знаком номера.
+_DIVISION_RE = re.compile(
+    r"^Розд[іi]л\b\s*(?:№\s*)?(?P<num>\d+)?\s*[.:)]?\s*(?P<title>.*)$", re.I)
+# Підзаголовок ділянки в дефектних актах: «ФАСАД», «КАСОВИЙ ВУЗОЛ».
+# Ознака — жодної малої літери; рядки розрахунків («ФЕМ-130кг*4,2=546кг») її мають.
+_SUBHEADER_RE = re.compile(r"^[^a-zа-яїієґ]{3,70}$")
 _POSITION_START_RE = re.compile(r"^(?P<num>\d{1,4})\s+(?P<rest>\D.*)$")
 _NOISE_RE = re.compile(
     r"Програмний комплекс|^\s*\d+\s*$|^\s*1\s+2\s+3\s+4\s+5\s*$|"
     r"^Додаток\s|^до ДБН|^затверджений|^Мінрегіонбуд|^від \d{2}\.\d{2}\.\d{4}|"
     r"^\s*№\s*$|^п/п\s|^вимір[уy]\s|^\[посада"
 )
-_DOC_CODE_RE = re.compile(r"\b(\d{2,5}[_-][А-ЯЇІЄҐA-Z]{1,5}[_-][А-ЯЇІЄҐA-Z]{2,6})\b")
-_HEADER_TITLE_RE = re.compile(r"^Відомість\s+обсяг", re.I)
-_TABLE_HEAD_RE = re.compile(r"Найменування\s+робіт|^\s*№\s*$|^п/п\b")
+_DOC_CODE_RE = re.compile(
+    r"(?<![\w-])(\d{2,5}_[А-ЯЇІЄҐA-Z]{1,5}_[А-ЯЇІЄҐA-Z\d][\w.-]{1,20})(?!\w)")
+# Заголовок документа, після якого йде шапка об'єкта. «Локальний кошторис»
+# сюди не входить: у відомостях це назва секції всередині документа.
+_HEADER_TITLE_RE = re.compile(
+    r"^(Відомість\s+обсяг|Дефектний\s+акт|Акт\s+дефектн)", re.I)
+_TABLE_HEAD_RE = re.compile(
+    r"Найменування\s+робіт|^\s*№\s*$|^п/п\b|^Ч\.ч\.|^Об'єми\s+робіт|"
+    r"^Умови\s+виконання|^Одиниця\s*$")
 _OBJECT_HINT_RE = re.compile(r"(ремонт|будівництв|реконструкц|реставрац|облаштув|благоустр)", re.I)
 
 # Хвіст рядка позиції: «…назва   м2 151,1» (колонки розділені 2+ пробілами).
@@ -231,6 +243,10 @@ def _match_section(line: str) -> ImportedSection | None:
 def _apply_object_header(doc: ImportedDocument, text: str) -> None:
     """Розбирає шапку: назва об'єкта + адреса + місто/область."""
     text = clean_text(text)
+    # Акти починають шапку службовим «на капітальний ремонт», після якого
+    # одразу йде сама назва об'єкта — префікс лише дублює її.
+    text = re.sub(r"^на\s+(капітальний|поточний|аварійний)\s+ремонт\s+(?=[А-ЯЇІЄҐ])",
+                  "", text, flags=re.I)
     doc.object_name = text
     doc.address = ""
     addr = re.search(r"за\s+адресою:?\s*(.*)$", text, re.I)
@@ -250,7 +266,8 @@ def _apply_object_header(doc: ImportedDocument, text: str) -> None:
         doc.region = clean_text(region.group(1)) + " область"
 
 
-def _finalize_position(block: list[str], number: int, doc: ImportedDocument):
+def _finalize_position(block: list[str], number: int, doc: ImportedDocument,
+                       quiet: bool = False):
     """Склеює рядки позиції та відрізає хвіст «одиниця виміру + кількість»."""
     text = " ".join(block).rstrip()
     m = _TAIL_STRICT_RE.search(text)
@@ -261,9 +278,10 @@ def _finalize_position(block: list[str], number: int, doc: ImportedDocument):
         if loose is not None and normalize_unit(loose.group("unit")) in _KNOWN_UNITS_NORM:
             m = loose
     if m is None:
-        doc.warnings.append(
-            f"Позиція {number}: не розпізнано одиницю виміру/кількість — «{clean_text(text)[:90]}»"
-        )
+        if not quiet:
+            doc.warnings.append(
+                f"Позиція {number}: не розпізнано одиницю виміру/кількість — "
+                f"«{clean_text(text)[:90]}»")
         return None
     qty = parse_number(m.group("qty"))
     if qty is None:
@@ -284,15 +302,19 @@ def _parse_lines(lines: list[str]) -> ImportedDocument:
     header_done = False
 
     def flush():
-        nonlocal block, block_num, current
+        nonlocal block, block_num
         if block and block_num:
             pos = _finalize_position(block, block_num, doc)
             if pos is not None:
-                if current is None:
-                    current = ImportedSection(kind="estimate", title="Локальний кошторис")
-                    doc.sections.append(current)
-                current.positions.append(pos)
+                emit(pos)
         block, block_num = [], 0
+
+    def emit(position) -> None:
+        nonlocal current
+        if current is None:
+            current = ImportedSection(kind="estimate", title="Локальний кошторис")
+            doc.sections.append(current)
+        current.positions.append(position)
 
     for raw in lines:
         stripped = clean_text(raw)
@@ -306,7 +328,7 @@ def _parse_lines(lines: list[str]) -> ImportedDocument:
             if hit:
                 doc.doc_code = hit.group(1)
 
-        # --- шапка об'єкта: рядки між «Відомість обсягів робіт» і шапкою таблиці
+        # --- шапка об'єкта: рядки між заголовком документа і шапкою таблиці
         if not header_done and _HEADER_TITLE_RE.match(stripped):
             in_header = True
             continue
@@ -321,21 +343,7 @@ def _parse_lines(lines: list[str]) -> ImportedDocument:
                 header_lines.append(stripped)
                 continue
 
-        section = _match_section(stripped)
-        if section is not None:
-            flush()
-            current = section
-            doc.sections.append(current)
-            if section.kind == "estimate":
-                allow_restart = True
-            continue
-
-        if not header_done and not doc.object_name and _OBJECT_HINT_RE.search(stripped) \
-                and len(stripped) > 25:
-            _apply_object_header(doc, stripped)
-            header_done = True
-            continue
-
+        # --- нова позиція
         m = _POSITION_START_RE.match(raw.lstrip())
         if m:
             num = int(m.group("num"))
@@ -344,11 +352,46 @@ def _parse_lines(lines: list[str]) -> ImportedDocument:
                 block_num, last_num = num, num
                 allow_restart = False
                 block = [m.group("rest")]
+                done = _finalize_position(block, block_num, doc, quiet=True)
+                if done is not None:
+                    emit(done)
+                    block, block_num = [], 0
                 continue
 
+        # --- продовження відкритої позиції
         if block_num:
-            block.append(raw.strip() if raw.startswith(" ") is False else raw)
-        elif current is not None and current.kind == "estimate" and not current.positions \
+            block.append(raw)
+            # Позиція закривається одразу, щойно в кінці з'явились одиниця
+            # виміру та кількість. Інакше подальші рядки — підзаголовки ділянок
+            # і рядки розрахунків із дефектних актів — псували б хвіст.
+            done = _finalize_position(block, block_num, doc, quiet=True)
+            if done is not None:
+                emit(done)
+                block, block_num = [], 0
+            continue
+
+        section = _match_section(stripped)
+        if section is not None:
+            current = section
+            doc.sections.append(current)
+            if section.kind == "estimate":
+                allow_restart = True
+            continue
+
+        # Підзаголовок ділянки — окремий розділ, а не частина попередньої роботи.
+        if current is not None and _SUBHEADER_RE.match(stripped) \
+                and sum(ch.isalpha() for ch in stripped) >= 3:
+            current = ImportedSection(kind="division", code="", title=stripped)
+            doc.sections.append(current)
+            continue
+
+        if not header_done and not doc.object_name and _OBJECT_HINT_RE.search(stripped) \
+                and len(stripped) > 25:
+            _apply_object_header(doc, stripped)
+            header_done = True
+            continue
+
+        if current is not None and current.kind == "estimate" and not current.positions \
                 and len(stripped) < 90:
             # Назва локального кошторису перенесена на наступний рядок.
             current.title = clean_text(f"{current.title} {stripped}")
