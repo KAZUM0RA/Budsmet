@@ -203,10 +203,13 @@ def price_site_refresh(force: bool = True) -> dict:
 
 
 @app.post("/api/price-site/upload")
-async def price_site_upload(file: UploadFile = File(...)) -> dict:
-    """Завантажує прайс-лист файлом: HTML зі збереженої сторінки, XLSX або CSV.
+async def price_site_upload(file: UploadFile = File(...), city: str = Form(""),
+                            region: str = Form("")) -> dict:
+    """Завантажує прайс файлом: HTML зі збереженої сторінки, XLSX або CSV.
 
-    Потрібно, коли сайт малює ціни скриптом і в самому HTML їх немає.
+    Якщо вказано місто, ціни вважаються такими, що вже містять його
+    регіональний коефіцієнт, і діляться на нього — саме так треба завантажувати
+    власні пораховані кошториси, інакше коефіцієнт намножився б удруге.
     """
     data = await file.read()
     if not data:
@@ -215,10 +218,19 @@ async def price_site_upload(file: UploadFile = File(...)) -> dict:
     if not prices:
         raise HTTPException(422, "У файлі не знайдено рядків «робота — одиниця — ціна». "
                                  "Потрібна таблиця з назвою роботи, одиницею виміру та ціною.")
+
+    factor, region_label = 1.0, ""
+    if city.strip() or region.strip():
+        factor, region_label = catalog.region_factor(city, region)
+        if factor and factor != 1.0:
+            for price in prices:
+                price.price = round(price.price / factor, 2)
+
     source = f"файл: {clean_text(file.filename or 'прайс')}"
     saved = price_sites.save(source, prices)
     price_sites.invalidate()
     return {"source": source, "saved": saved, "count": len(price_sites.stored()),
+            "region_factor": factor, "region_label": region_label,
             "sample": [{"name": p.name, "unit": p.unit, "price": p.price,
                         "category": p.category} for p in prices[:8]]}
 

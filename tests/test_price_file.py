@@ -99,3 +99,39 @@ def test_uploaded_prices_are_used_for_estimates(client, clean_db, monkeypatch):
         "unit": "м", "quantity": 12}).json()
     assert added["price_source"] == "site"
     assert added["labor_price"] == pytest.approx(2600 * 1.05, rel=1e-3)
+
+
+def test_own_estimate_can_be_loaded_as_price_base(client, clean_db, monkeypatch):
+    """Готовий кошторис в Excel — це теж прайс: назва, одиниця, ціна за одиницю."""
+    from backend import config
+    from backend.services import estimates, exporter
+
+    monkeypatch.setattr(config, "PRICE_SITE", "файл: koshtorys.xlsx")
+    oid = client.post("/api/objects", json={"name": "Старий об'єкт",
+                                            "city": "Полтава"}).json()["id"]
+    client.post(f"/api/objects/{oid}/positions",
+                json={"name": "Демонтаж розеток", "unit": "шт", "quantity": 10})
+    calc = estimates.calculate_object(oid)
+    workbook = exporter.to_xlsx(calc)
+
+    # Ціни в кошторисі вже з коефіцієнтом Полтави — вказуємо місто при завантаженні.
+    response = client.post("/api/price-site/upload",
+                           files={"file": ("koshtorys.xlsx", io.BytesIO(workbook),
+                                           "application/x")},
+                           data={"city": "Полтава"})
+    assert response.status_code == 200
+    assert response.json()["region_factor"] == 1.05
+
+    # Новий об'єкт у тому ж місті має дати ту саму ціну, а не помножену вдруге.
+    other = client.post("/api/objects", json={"name": "Новий", "city": "Полтава"}).json()["id"]
+    added = client.post(f"/api/objects/{other}/positions",
+                        json={"name": "Демонтаж розеток", "unit": "шт",
+                              "quantity": 3}).json()
+    assert added["labor_price"] == pytest.approx(55 * 1.05, rel=1e-2)
+
+
+def test_upload_without_city_keeps_prices_as_base(client, clean_db):
+    response = client.post("/api/price-site/upload",
+                           files={"file": ("prais.xlsx", io.BytesIO(make_xlsx()),
+                                           "application/x")})
+    assert response.json()["region_factor"] == 1.0

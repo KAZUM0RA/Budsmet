@@ -798,12 +798,17 @@ async function loadSitePrices() {
 async function uploadPriceFile(file) {
   const body = new FormData();
   body.append('file', file);
+  const city = $('#site-file-city').value.trim();
+  if (city) body.append('city', city);
   toast('Розбираю прайс…');
   try {
     const response = await fetch('/api/price-site/upload', { method: 'POST', body });
     const result = await response.json();
     if (!response.ok) throw new Error(result.detail || 'Помилка');
-    toast(`Завантажено ${result.saved} позицій з файлу`, 'ok');
+    toast(result.region_factor && result.region_factor !== 1
+      ? `Завантажено ${result.saved} позицій · знято коефіцієнт ${result.region_label}`
+        + ` (÷${result.region_factor})`
+      : `Завантажено ${result.saved} позицій з файлу`, 'ok');
     await loadSitePrices();
     await loadMeta();
   } catch (err) { toast(err.message, 'err'); }
