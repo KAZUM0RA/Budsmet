@@ -441,6 +441,8 @@ async function matchFromCatalog() {
 
 function renderMatchReview(stats, review) {
   const panel = $('#match-review');
+  const previousWarning = $('#web-off');
+  if (previousWarning) previousWarning.remove();
   if (!review.length) {
     panel.classList.add('hidden');
     $('#reprice-stats').textContent =
@@ -517,6 +519,42 @@ function renderMatchReview(stats, review) {
 
   panel.classList.remove('hidden');
   $('#reprice-stats').textContent = '';
+}
+
+async function priceUnknownFromWeb() {
+  const button = $('#btn-price-web');
+  const original = button.textContent;
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span>Шукаю…';
+  try {
+    const result = await api(`/api/objects/${state.currentId}/price-unknown`,
+      json('POST', {}));
+    if (!result.enabled) {
+      toast('Пошук в інтернеті вимкнено', 'err');
+      $('#review-note').insertAdjacentHTML('afterend', `
+        <div class="warn" id="web-off">
+          <b>Пошук цін в інтернеті вимкнено.</b> ${esc(result.reason || '')}<br>
+          Щоб увімкнути: візьміть безкоштовний ключ на
+          <a href="https://serpapi.com/users/sign_up" target="_blank" rel="noopener">serpapi.com</a>
+          (250 запитів на місяць, картка не потрібна), потім на сервері
+          <code>sudo nano /etc/budsmet.env</code> впишіть два рядки:
+          <code>BUDSMET_PRICE_PROVIDER=serpapi<br>SERPAPI_KEY=ваш_ключ</code>
+          і перезапустіть: <code>sudo systemctl restart budsmet</code>.
+          Докладніше — у docs/internet-prices.md.
+        </div>`);
+      return;
+    }
+    const s = result.stats;
+    state.calc = result.calc;
+    renderTree();
+    renderTotals();
+    toast(s.priced
+      ? `Знайдено ціни для ${s.priced} з ${s.candidates} позицій (запитів: ${s.web.used})`
+      : `Для ${s.candidates} позицій ціни в інтернеті не знайдено`, s.priced ? 'ok' : '');
+  } catch (err) { toast(err.message, 'err'); } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
 }
 
 /* ------------------------------------------------------------------- імпорт */
@@ -738,6 +776,7 @@ async function loadSitePrices() {
     <div><span class="lbl">Джерело</span>
       <a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url || '—')}</a></div>
     <div><span class="lbl">Позицій</span><b>${data.count}</b></div>
+    <div><span class="lbl">Джерел</span><b>${(data.sources || []).length}</b></div>
     <div><span class="lbl">Розділів</span><b>${data.categories.length}</b></div>
     <div><span class="lbl">Оновлено</span>
       <b class="${stale ? 'stale' : ''}">${
@@ -754,6 +793,20 @@ async function loadSitePrices() {
       </tbody></table>${data.matched > data.items.length
         ? `<div class="muted" style="padding:10px">Показано ${data.items.length} з ${data.matched}</div>` : ''}`
     : `<div class="empty"><p class="muted">Прайс ще не завантажено. Натисніть «Оновити з сайту».</p></div>`;
+}
+
+async function uploadPriceFile(file) {
+  const body = new FormData();
+  body.append('file', file);
+  toast('Розбираю прайс…');
+  try {
+    const response = await fetch('/api/price-site/upload', { method: 'POST', body });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || 'Помилка');
+    toast(`Завантажено ${result.saved} позицій з файлу`, 'ok');
+    await loadSitePrices();
+    await loadMeta();
+  } catch (err) { toast(err.message, 'err'); }
 }
 
 async function refreshSitePrices() {
@@ -923,6 +976,12 @@ function init() {
   $('#cat-search').oninput = () => { clearTimeout(catTimer); catTimer = setTimeout(loadCatalog, 220); };
   $('#cat-category').onchange = loadCatalog;
   $('#btn-site-refresh').onclick = refreshSitePrices;
+  $('#btn-site-upload').onclick = () => $('#site-file').click();
+  $('#site-file').onchange = (e) => {
+    if (e.target.files[0]) uploadPriceFile(e.target.files[0]);
+    e.target.value = '';
+  };
+  $('#btn-price-web').onclick = priceUnknownFromWeb;
   let siteTimer;
   $('#site-search').oninput = () => { clearTimeout(siteTimer); siteTimer = setTimeout(loadSitePrices, 220); };
   let histTimer;

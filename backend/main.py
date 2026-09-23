@@ -183,6 +183,7 @@ def price_site_status(limit: int = Query(50, ge=1, le=1000), q: str = "") -> dic
                 or needle in (r["category"] or "").lower()]
     return {
         "url": config.PRICE_SITE,
+        "sources": price_sites.sources(),
         "count": len(price_sites.stored()),
         "matched": len(rows),
         "age_days": price_sites.age_days(),
@@ -194,11 +195,32 @@ def price_site_status(limit: int = Query(50, ge=1, le=1000), q: str = "") -> dic
 
 @app.post("/api/price-site/refresh")
 def price_site_refresh(force: bool = True) -> dict:
-    """Перечитує прайс із сайту. Повертає кількість позицій або текст помилки."""
-    result = price_sites.refresh(force=force)
+    """Перечитує прайси з усіх налаштованих сторінок."""
+    result = price_sites.refresh_all(force=force)
     result["count"] = len(price_sites.stored())
     result["age_days"] = price_sites.age_days()
     return result
+
+
+@app.post("/api/price-site/upload")
+async def price_site_upload(file: UploadFile = File(...)) -> dict:
+    """Завантажує прайс-лист файлом: HTML зі збереженої сторінки, XLSX або CSV.
+
+    Потрібно, коли сайт малює ціни скриптом і в самому HTML їх немає.
+    """
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Порожній файл")
+    prices = price_sites.parse_price_file(file.filename or "", data)
+    if not prices:
+        raise HTTPException(422, "У файлі не знайдено рядків «робота — одиниця — ціна». "
+                                 "Потрібна таблиця з назвою роботи, одиницею виміру та ціною.")
+    source = f"файл: {clean_text(file.filename or 'прайс')}"
+    saved = price_sites.save(source, prices)
+    price_sites.invalidate()
+    return {"source": source, "saved": saved, "count": len(price_sites.stored()),
+            "sample": [{"name": p.name, "unit": p.unit, "price": p.price,
+                        "category": p.category} for p in prices[:8]]}
 
 
 @app.get("/api/price")
@@ -364,6 +386,18 @@ def object_manual_to_catalog(object_id: int, payload: ToCatalogIn) -> dict:
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     return {"stats": stats, "calc": estimates.calculate_object(object_id)}
+
+
+@app.post("/api/objects/{object_id}/price-unknown")
+def object_price_unknown(object_id: int) -> dict:
+    """Шукає в інтернеті ціни лише для позицій, що лишились без ціни."""
+    try:
+        result = estimates.price_unknown_from_web(object_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if result.get("enabled"):
+        result["calc"] = estimates.calculate_object(object_id)
+    return result
 
 
 @app.post("/api/objects/{object_id}/history")

@@ -5,6 +5,7 @@ import json
 
 from .. import config, db
 from . import catalog, pricing
+from . import web_prices
 from .web_prices import WebBudget
 from .importer import ImportedDocument
 from .normalize import clean_text, normalize_unit, parse_number
@@ -505,6 +506,58 @@ def save_manual_prices_to_catalog(object_id: int, category: str = "") -> dict:
     stats["region_factor"], stats["region_label"] = catalog.region_factor(
         obj["city"], obj["region"])
     return stats
+
+
+def price_unknown_from_web(object_id: int) -> dict:
+    """Шукає ціни в інтернеті лише для позицій, що лишились без ціни.
+
+    Саме цей режим має сенс на платних пошукових сервісах: запит витрачається
+    тільки там, де ні історія, ні довідник, ні прайс сайту роботи не знають.
+    """
+    obj = get_object(object_id)
+    if obj is None:
+        raise LookupError("Об'єкт не знайдено")
+
+    status = web_prices.provider_status()
+    if not status["enabled"]:
+        return {"enabled": False, "reason": status["reason"],
+                "provider": status["provider"], "stats": None}
+
+    budget = WebBudget(limit=config.WEB_MAX_QUERIES)
+    stats = {"candidates": 0, "priced": 0, "not_found": 0, "provider": status["provider"]}
+    found: list[dict] = []
+
+    for estimate in build_tree(object_id):
+        for division in estimate["divisions"]:
+            for position in division["positions"]:
+                if position["manual"]:
+                    continue
+                if (position["labor_price"] or position["material_price"]
+                        or position["machines_price"]):
+                    continue
+                stats["candidates"] += 1
+                hit = web_prices.lookup(position["name"], position["unit"],
+                                        obj["city"], obj["region"], budget=budget)
+                if not hit.found:
+                    stats["not_found"] += 1
+                    continue
+                db.execute(
+                    """UPDATE positions SET labor_price=?, material_price=?,
+                           machines_price=0, price_source='web', manual=0
+                       WHERE id = ?""",
+                    (hit.labor, hit.material, position["id"]))
+                stats["priced"] += 1
+                found.append({
+                    "position_id": position["id"], "number": position["number"],
+                    "name": position["name"], "unit": position["unit"],
+                    "labor": hit.labor, "material": hit.material,
+                    "cached": hit.cached,
+                    "samples": [s for s in hit.samples if isinstance(s, dict)][:3],
+                })
+
+    db.execute("UPDATE objects SET updated_at = datetime('now') WHERE id = ?", (object_id,))
+    stats["web"] = budget.to_dict()
+    return {"enabled": True, "stats": stats, "found": found}
 
 
 def save_to_history(object_id: int) -> dict:

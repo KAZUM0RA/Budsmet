@@ -22,7 +22,13 @@ DEFAULTS = {
 # --- Прайс-лист із сайту ---
 # Сторінка з цінами на роботи; завантажується цілком і зберігається в базі,
 # тому ключі та ліміти запитів тут не потрібні. Порожнє значення — вимкнено.
+# Одна або кілька сторінок через кому: ціни з усіх зливаються в одну базу.
 PRICE_SITE = os.environ.get("BUDSMET_PRICE_SITE", "https://www.rabotniki.ua/uk/price").strip()
+
+
+def price_sites() -> list[str]:
+    """Перелік сторінок прайсів (порожньо — джерело вимкнено)."""
+    return [u.strip() for u in PRICE_SITE.replace("\n", ",").split(",") if u.strip()]
 SITE_REFRESH_DAYS = int(os.environ.get("BUDSMET_SITE_REFRESH_DAYS", "30"))
 
 # --- Інтернет-аналіз цін (пошукові сервіси) ---

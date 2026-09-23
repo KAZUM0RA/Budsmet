@@ -31,9 +31,13 @@ _UNIT_WORDS = {
 _UNITS_NORM = {normalize_unit(u) for u in _UNIT_WORDS} - {""}
 
 # «від 150 грн», «150-200 грн», «150 ₴», «150.00»
+# Число з роздільником тисяч або без нього. Варіант із роздільником стоїть
+# першим, інакше «2400» прочиталось би як «240», а «1 250» — як «1».
+_NUMBER = r"\d{1,3}(?:[\s\u00a0\u202f]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?"
+
 _PRICE_RE = re.compile(
-    r"(?:від\s*)?(?P<a>\d{1,3}(?:[\s ]\d{3})*(?:[.,]\d+)?)"
-    r"(?:\s*[-–—]\s*(?P<b>\d{1,3}(?:[\s ]\d{3})*(?:[.,]\d+)?))?"
+    r"(?:від\s*)?(?P<a>" + _NUMBER + r")"
+    r"(?:\s*[-–—]\s*(?P<b>" + _NUMBER + r"))?"
     r"\s*(?:грн|₴|uah)?",
     re.I,
 )
@@ -323,7 +327,110 @@ def _dedupe(prices: list[SitePrice]) -> list[SitePrice]:
     return out
 
 
+# ------------------------------------------------------------ прайс із файлу
+
+def parse_price_file(filename: str, data: bytes) -> list[SitePrice]:
+    """Розбирає прайс-лист із файлу: HTML, збережений з браузера, XLSX або CSV.
+
+    Потрібен, коли сайт малює ціни скриптом і в самому HTML їх немає: сторінку
+    досить зберегти з браузера (Ctrl+S) — там уже буде готова таблиця.
+    """
+    name = (filename or "").lower()
+    if name.endswith((".xlsx", ".xlsm", ".xltx")) or data[:2] == b"PK":
+        return _parse_price_table(_xlsx_rows(data))
+    if name.endswith((".csv", ".tsv", ".txt")):
+        return _parse_price_table(_csv_rows(data))
+    # Усе інше вважаємо HTML.
+    parser = _RowExtractor()
+    parser.feed(data.decode("utf-8", errors="replace"))
+    parser.close()
+    return _dedupe(parse_rows(parser.rows, url=f"файл: {filename}"))
+
+
+def _xlsx_rows(data: bytes) -> list[list[str]]:
+    import io
+
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+    rows = []
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows(values_only=True):
+            cells = ["" if c is None else clean_text(c) for c in row]
+            if any(cells):
+                rows.append(cells)
+    workbook.close()
+    return rows
+
+
+def _csv_rows(data: bytes) -> list[list[str]]:
+    import csv
+    import io
+
+    text = data.decode("utf-8-sig", errors="replace")
+    try:
+        dialect = csv.Sniffer().sniff(text[:4096], delimiters=";,\t")
+    except csv.Error:
+        dialect = csv.excel()
+        dialect.delimiter = ";"
+    return [[clean_text(c) for c in row]
+            for row in csv.reader(io.StringIO(text), dialect) if any(row)]
+
+
+def _parse_price_table(rows: list[list[str]]) -> list[SitePrice]:
+    """Табличний прайс: шукає колонки назви, одиниці та ціни за шапкою."""
+    header: dict[str, int] = {}
+    category = ""
+    found: list[SitePrice] = []
+
+    for cells in rows:
+        low = [c.lower() for c in cells]
+        if not header:
+            for idx, text in enumerate(low):
+                if ("найменув" in text or "назва" in text or "робот" in text
+                        or "послуг" in text) and "name" not in header:
+                    header["name"] = idx
+                elif ("один" in text or "вим" in text or text.startswith("од")) \
+                        and "unit" not in header:
+                    header["unit"] = idx
+                elif ("ціна" in text or "вартість" in text or "тариф" in text) \
+                        and "price" not in header:
+                    header["price"] = idx
+            if "name" in header and "price" in header:
+                continue
+            header = {}
+
+        if not header:
+            # До шапки трапляються заголовки розділів — запам'ятовуємо останній.
+            single = [c for c in cells if c]
+            if len(single) == 1 and len(single[0]) <= 70:
+                category = single[0]
+            continue
+
+        def cell(key: str) -> str:
+            idx = header.get(key, -1)
+            return cells[idx] if 0 <= idx < len(cells) else ""
+
+        name, price = clean_text(cell("name")), _price_from(cell("price"))
+        if price is None:
+            single = [c for c in cells if c]
+            if len(single) == 1 and len(single[0]) <= 70:
+                category = single[0]
+            continue
+        if not name or len(name) < 6 or _looks_like_noise(name):
+            continue
+        found.append(SitePrice(name, _unit_from(cell("unit")), price, category, ""))
+    return _dedupe(found)
+
+
 # ----------------------------------------------------------------------- сховище
+
+def sources() -> list[dict]:
+    """Перелік джерел прайсів із кількістю позицій і датою завантаження."""
+    return [dict(r) for r in db.query(
+        """SELECT site, COUNT(*) AS count, MIN(fetched_at) AS fetched_at
+             FROM site_prices GROUP BY site ORDER BY site""")]
+
 
 def save(url: str, prices: list[SitePrice]) -> int:
     with db.transaction() as conn:
@@ -337,22 +444,44 @@ def save(url: str, prices: list[SitePrice]) -> int:
 
 
 def stored(url: str | None = None) -> list[dict]:
-    site = url or config.PRICE_SITE
-    return [dict(r) for r in db.query(
-        "SELECT * FROM site_prices WHERE site = ? ORDER BY id", (site,))]
+    """Позиції одного прайса або всіх налаштованих разом."""
+    if url:
+        return [dict(r) for r in db.query(
+            "SELECT * FROM site_prices WHERE site = ? ORDER BY id", (url,))]
+    return [dict(r) for r in db.query("SELECT * FROM site_prices ORDER BY id")]
 
 
 def age_days(url: str | None = None) -> float | None:
-    site = url or config.PRICE_SITE
-    row = db.query_one(
-        """SELECT (julianday('now') - julianday(MIN(fetched_at))) AS age
-             FROM site_prices WHERE site = ?""", (site,))
+    """Скільки днів найстарішому запису (одного прайса або всіх разом)."""
+    if url:
+        row = db.query_one(
+            """SELECT (julianday('now') - julianday(MIN(fetched_at))) AS age
+                 FROM site_prices WHERE site = ?""", (url,))
+    else:
+        row = db.query_one(
+            "SELECT (julianday('now') - julianday(MIN(fetched_at))) AS age FROM site_prices")
     return None if row is None or row["age"] is None else float(row["age"])
 
 
+def refresh_all(force: bool = False) -> dict:
+    """Перечитує всі налаштовані прайси; повертає підсумок по кожному."""
+    sites = config.price_sites()
+    if not sites:
+        return {"sites": [], "saved": 0, "error": "адресу прайса не задано"}
+    results = [refresh(site, force=force) for site in sites]
+    saved = sum(r.get("saved", 0) for r in results)
+    errors = [f"{r['site']}: {r['error']}" for r in results if r.get("error")]
+    return {
+        "sites": results,
+        "saved": saved,
+        "refreshed": any(r.get("refreshed") for r in results),
+        "error": "; ".join(errors) if errors and not saved else "",
+    }
+
+
 def refresh(url: str | None = None, force: bool = False) -> dict:
-    """Перечитує прайс сайту, якщо він застарів або якщо force."""
-    site = url or config.PRICE_SITE
+    """Перечитує один прайс, якщо він застарів або якщо force."""
+    site = url or (config.price_sites() or [""])[0]
     if not site:
         return {"site": "", "saved": 0, "error": "адресу прайса не задано"}
     current_age = age_days(site)
@@ -371,13 +500,14 @@ def refresh(url: str | None = None, force: bool = False) -> dict:
                 "error": "на сторінці не знайдено позицій «робота — одиниця — ціна»"}
     _FAILED_AT.pop(site, None)
     save(site, prices)
-    _MATCHER_CACHE.pop(site, None)
+    _MATCHER_CACHE.clear()
     return {"site": site, "saved": len(prices), "pages": len(pages), "refreshed": True}
 
 
 # ------------------------------------------------------------------- підбір ціни
 
 _MATCHER_CACHE: dict[str, tuple[WorkMatcher, list[dict]]] = {}
+_ALL_SITES = "*"
 # Після невдалої спроби завантаження не ломимось у сайт знову: інакше
 # кошторис на сотню позицій зробив би сотню запитів по таймауту кожен.
 _FAILED_AT: dict[str, float] = {}
@@ -393,27 +523,30 @@ def _recently_failed(site: str) -> bool:
 def _matcher(site: str):
     cached = _MATCHER_CACHE.get(site)
     if cached is None:
-        rows = stored(site)
+        rows = stored(None if site == _ALL_SITES else site)
         if not rows:
             return None
         items = [{"code": str(r["id"]), "name": r["name"], "unit": r["unit"],
                   "category": r["category"], "labor": r["price"], "material": 0.0,
-                  "machines": 0.0} for r in rows]
+                  "machines": 0.0, "site": r["site"]} for r in rows]
         cached = (WorkMatcher(items), items)
         _MATCHER_CACHE[site] = cached
     return cached[0]
 
 
 def lookup(name: str, unit: str, auto_refresh: bool = True) -> dict | None:
-    """Ціна роботи з прайса сайту або None, якщо збігу немає."""
-    site = config.PRICE_SITE
-    if not site:
+    """Ціна роботи з прайсів сайтів або None, якщо збігу немає."""
+    sites = config.price_sites()
+    if not sites:
         return None
-    if auto_refresh and not _recently_failed(site):
-        age = age_days(site)
-        if age is None or age >= config.SITE_REFRESH_DAYS:
-            refresh(site)
-    matcher = _matcher(site)
+    if auto_refresh:
+        for site in sites:
+            if _recently_failed(site):
+                continue
+            age = age_days(site)
+            if age is None or age >= config.SITE_REFRESH_DAYS:
+                refresh(site)
+    matcher = _matcher(_ALL_SITES)
     if matcher is None:
         return None
     best = matcher.best(name, unit)
@@ -428,7 +561,7 @@ def lookup(name: str, unit: str, auto_refresh: bool = True) -> dict | None:
         "matched_unit": item.get("unit", ""),
         "category": item.get("category", ""),
         "score": best.score,
-        "site": site,
+        "site": item.get("site", ""),
     }
 
 

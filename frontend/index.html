@@ -116,7 +116,12 @@
               <h2>Перевірте підбір</h2>
               <div id="review-note" class="muted"></div>
             </div>
-            <button id="btn-review-close" class="ghost">Згорнути</button>
+            <div style="display:flex;gap:8px">
+              <button id="btn-price-web" class="ghost"
+                      title="Пошукати ціни в інтернеті лише для позицій без ціни">
+                Пошукати в інтернеті</button>
+              <button id="btn-review-close" class="ghost">Згорнути</button>
+            </div>
           </div>
           <div id="review-list"></div>
         </div>
@@ -199,6 +204,10 @@
       <div class="cat-bar">
         <input id="site-search" type="search" placeholder="Пошук у прайсі…">
         <button id="btn-site-refresh" class="primary">Оновити з сайту</button>
+        <button id="btn-site-upload" class="ghost"
+                title="Завантажити прайс файлом: збережена сторінка, Excel або CSV">
+          Завантажити файлом</button>
+        <input id="site-file" type="file" accept=".html,.htm,.xlsx,.xls,.csv,.txt" hidden>
       </div>
       <div id="site-table" class="prev-table"></div>
     </section>
