@@ -14,13 +14,14 @@ from .normalize import normalize_name, normalize_unit, stem, stem_phrase
 # підбору, тому клас дії перевіряється окремо від схожості тексту.
 _ACTIONS = {
     "demolition": ("демонтаж", "розбиран", "зніман", "знят", "видален", "прибиран",
-                   "зрубуван", "збиван", "пробиван", "штроблен", "свердлен"),
+                   "зрубуван", "збиван", "пробиван", "штроблен", "свердлен",
+                   "відбиван"),
     "install": ("улаштуван", "влаштуван", "установлен", "установк", "монтаж", "укладан",
                 "укладк", "мурував", "мурован", "заповнен", "обклеюван", "поклейк",
                 "фарбуван", "штукатурен", "шпаклюван", "шпаклівк", "опорядж",
                 "утеплен", "ізоляц", "прокладан", "прокладк", "armуван", "армуван",
                 "накритт", "ґрунтуван", "грунтуван", "затирк", "обшивк", "заміна",
-                "замін", "встановлен"),
+                "замін", "встановлен", "облицюван", "личкуван", "оздоблен"),
 }
 
 
@@ -80,6 +81,13 @@ class WorkMatcher:
     # тому в автоматичному підборі протилежний клас не розглядається взагалі,
     # а в переліку варіантів для ручного вибору сильно знижується.
     ACTION_PENALTY = 45.0
+    # З якої точності вважаємо, що розцінка цілком міститься в запиті,
+    # і наскільки це підтягує покриття (див. _precision).
+    SUBSET_PRECISION = 0.95
+    SUBSET_BONUS = 0.45
+    # Якщо довідник не знає навіть цієї частки слів запиту, збіг за рештою
+    # не дає підстав для автоматичного підбору й оцінка пропорційно падає.
+    KNOWN_SHARE_FLOOR = 0.5
 
     def __init__(self, items: list[dict]):
         self.items = items
@@ -165,12 +173,61 @@ class WorkMatcher:
         found = sum(self._weight(t) for t in query_tokens if self._token_hit(t, words))
         return found / total
 
+    def _precision(self, query_tokens: list[str], idx: int) -> float:
+        """Частка ваги слів самої розцінки, які є в запиті (0..1).
+
+        Доповнює покриття. У документах АВК-5 назва роботи часто має хвіст-
+        уточнення: ділянку («(цоколь сходів)»), поверхню («по цегляних та
+        бетонних поверхнях»), обсяг в одному місці. Довідник тримає коротку
+        канонічну назву, тож ці слова рахуються непокритими, хоча вони не
+        суперечать розцінці, а лише уточнюють її. Якщо всі слова розцінки є в
+        запиті, вона підходить — і це має компенсувати довгий хвіст.
+
+        Саму по собі точність брати не можна: коротка загальна розцінка
+        («Розбирання стін») мала б одиницю на будь-якому запиті про стіни. Від
+        цього захищає покриття, яке в такої розцінки низьке.
+        """
+        words = [t for t in self._tokens[idx] if not _is_action_word(t)]
+        if not words:
+            return 0.0
+        query = set(query_tokens)
+        total = sum(self._weight(t) for t in words)
+        if total <= 0:
+            return 0.0
+        found = sum(self._weight(t) for t in words if self._token_hit(t, query))
+        return found / total
+
+    def _known_share(self, query_tokens: list[str]) -> float:
+        """Частка слів запиту, які взагалі трапляються в довіднику (0..1).
+
+        Слово, якого немає в жодній розцінці, важить нуль і тому не впливає на
+        порядок кандидатів — це правильно для ранжування, але не для довіри.
+        Інакше запит із єдиним знайомим словом («трап» у «Шліфування
+        космічного трапа») дає стовідсоткове покриття й видає впевнену, але
+        чужу розцінку. Такий збіг лишається в переліку для ручного вибору,
+        проте не має проходити як автоматичний.
+        """
+        core = [t for t in query_tokens
+                if not t.isdigit() and not _is_action_word(t)] or query_tokens
+        if not core:
+            return 1.0
+        known = sum(1 for t in core if self._weight(t) > 0)
+        return known / len(core)
+
     def _score(self, query_tokens: list[str], query_phrase: str, query_action: str,
                unit: str, idx: int) -> float:
         coverage = self._coverage(query_tokens, idx)
+        relevance = coverage
+        if self._precision(query_tokens, idx) >= self.SUBSET_PRECISION:
+            # Усі вагомі слова розцінки є в запиті — решта слів запиту лише
+            # уточнює ділянку чи поверхню, тож не має топити правильний збіг.
+            relevance += (1.0 - coverage) * self.SUBSET_BONUS
         similarity = fuzz.token_set_ratio(query_phrase, self._choices[idx]) / 100.0
-        # Основа — покриття вагомих слів; схожість рядків лише уточнює.
-        score = (coverage * 0.78 + similarity * 0.22) * 100.0
+        # Основа — збіг вагомих слів; схожість рядків лише уточнює.
+        score = (relevance * 0.78 + similarity * 0.22) * 100.0
+        share = self._known_share(query_tokens)
+        if share < self.KNOWN_SHARE_FLOOR:
+            score *= share / self.KNOWN_SHARE_FLOOR
 
         item_action = self._actions[idx]
         if query_action and item_action and query_action != item_action:
@@ -230,30 +287,6 @@ class WorkMatcher:
     def best(self, name: str, unit: str = "") -> MatchResult | None:
         found = self.match(name, unit, limit=1)
         return found[0] if found else None
-
-    @staticmethod
-    def _token_hit(query_token: str, words: set[str]) -> bool:
-        """Чи є слово запиту в назві розцінки з поправкою на українські відмінки.
-
-        Проста перевірка входження підрядка тут не працює: «розетк» не міститься
-        в «розеток», а «плитк» — у «плиток» (випадний голосний).
-        """
-        if not query_token:
-            return False
-        for word in words:
-            # Довше слово запиту не має «поглинати» коротше слово розцінки:
-            # інакше «плитк» (плитка) збігалося б із «плит» (плита перекриття).
-            if word.startswith(query_token) and len(query_token) >= 4:
-                return True
-            if query_token.startswith(word) and len(word) >= 5:
-                return True
-            if len(query_token) >= 4 and len(word) >= 4:
-                # Короткі слова легко сплутати («плитк» — плитка, «плит» —
-                # плита), тому для них потрібен вищий поріг схожості.
-                threshold = 90 if min(len(query_token), len(word)) < 6 else 82
-                if fuzz.ratio(query_token, word) >= threshold:
-                    return True
-        return False
 
     def search(self, text: str, limit: int = 20) -> list[MatchResult]:
         """Пошук для автопідказки: коротке слово має знаходити довгі назви розцінок."""
